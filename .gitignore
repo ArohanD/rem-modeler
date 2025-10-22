@@ -29,5 +29,8 @@ ENV/
 .vscode/
 .idea/
 
+# For now, ignore most of the data
+data/tx/
+data/tutorial/
 
-
+*.tif
