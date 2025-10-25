@@ -1,3 +1,3 @@
-from .utils import merge_tifs
+from .utils import merge_tifs, print_raster_stats
 
-__all__ = ["merge_tifs"]
+__all__ = ["merge_tifs", "print_raster_stats"]

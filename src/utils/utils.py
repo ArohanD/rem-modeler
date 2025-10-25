@@ -79,4 +79,63 @@ def merge_tifs(directory: str | Path, output_path: str | Path | None = None) -> 
     return out_path
 
 
-__all__ = ["merge_tifs"]
+def print_raster_stats(raster_path: str | Path) -> None:
+    """
+    Print the statistics of a raster file.
+
+    Most importantly, we want to know the distribution of values in the raster
+    """
+    raster_path = Path(raster_path)
+    if not raster_path.exists():
+        raise ValueError(f"Raster file {raster_path} does not exist")
+    
+    gdal.UseExceptions()
+    ds = gdal.Open(str(raster_path))
+    if ds is None:
+        raise ValueError(f"Failed to open raster file {raster_path}")
+
+    print(f"\n{'='*60}")
+    print(f"Raster file: {raster_path}")
+    print(f"{'='*60}")
+    print(f"Dimensions: {ds.RasterXSize} x {ds.RasterYSize} pixels")
+    print(f"Number of bands: {ds.RasterCount}")
+    print(f"Projection: {ds.GetProjection()[:80]}...")  # Truncate long projection string
+    print(f"Geotransform: {ds.GetGeoTransform()}")
+    
+    # Get statistics for each band (usually just 1 for elevation data)
+    for band_num in range(1, ds.RasterCount + 1):
+        band = ds.GetRasterBand(band_num)
+        
+        print(f"\n--- Band {band_num} Statistics ---")
+        
+        # Get or compute statistics
+        stats = band.GetStatistics(True, True)  # (approx_ok=True, force=True)
+        print(f"  Min value:    {stats[0]:.2f}")
+        print(f"  Max value:    {stats[1]:.2f}")
+        print(f"  Mean value:   {stats[2]:.2f}")
+        print(f"  Std Dev:      {stats[3]:.2f}")
+        
+        # Get histogram
+        print(f"\n  Computing histogram...")
+        hist = band.GetHistogram(min=stats[0], max=stats[1], buckets=10, approx_ok=False)
+        
+        # Print histogram in a readable format
+        print(f"\n  Value Distribution (10 bins):")
+        bin_width = (stats[1] - stats[0]) / 10
+        for i, count in enumerate(hist):
+            bin_min = stats[0] + (i * bin_width)
+            bin_max = bin_min + bin_width
+            bar = '█' * int(count / max(hist) * 50)  # Scale to 50 chars max
+            print(f"    {bin_min:8.2f} - {bin_max:8.2f}: {int(count):10d} {bar}")
+        
+        # Check for NoData value
+        nodata = band.GetNoDataValue()
+        if nodata is not None:
+            print(f"\n  NoData value: {nodata}")
+        
+        band = None  # Close band
+    
+    ds = None  # Close dataset
+    print(f"\n{'='*60}\n")
+
+__all__ = ["merge_tifs", "print_raster_stats"]
