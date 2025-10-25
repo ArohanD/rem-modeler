@@ -175,6 +175,55 @@ def interactive_raster_viewer(
     return state
 
 
+# Helper Functions
+
+def _compute_hillshade(
+    elevation: np.ndarray,
+    azimuth: float = 315.0,
+    altitude: float = 45.0,
+    z_factor: float = 1.0
+) -> np.ndarray:
+    """
+    Compute hillshade from elevation data.
+    
+    Parameters
+    ----------
+    elevation : np.ndarray
+        Elevation data
+    azimuth : float
+        Light source azimuth angle (degrees, 0-360)
+    altitude : float
+        Light source altitude angle (degrees, 0-90)
+    z_factor : float
+        Vertical exaggeration factor
+        
+    Returns
+    -------
+    np.ndarray
+        Hillshade values (0-255)
+    """
+    # Convert to radians
+    azimuth_rad = np.radians(azimuth)
+    altitude_rad = np.radians(altitude)
+    
+    # Calculate gradients
+    x, y = np.gradient(elevation * z_factor)
+    
+    # Calculate slope and aspect
+    slope = np.pi/2.0 - np.arctan(np.sqrt(x*x + y*y))
+    aspect = np.arctan2(-x, y)
+    
+    # Calculate hillshade
+    shaded = np.sin(altitude_rad) * np.sin(slope) + \
+             np.cos(altitude_rad) * np.cos(slope) * \
+             np.cos(azimuth_rad - aspect)
+    
+    # Scale to 0-255
+    shaded = (shaded + 1) / 2 * 255
+    
+    return shaded.astype(np.uint8)
+
+
 # Widget Builders
 # These functions add interactive controls to the viewer
 
@@ -213,6 +262,104 @@ def minmax_widget(state: ViewerState, fig: Any, im: Any) -> None:
                 im.set_clim(vmin, vmax)
                 state.user_inputs['min'] = vmin
                 state.user_inputs['max'] = vmax
+                fig.canvas.draw_idle()
+        except ValueError:
+            pass
+    
+    def done(event):
+        plt.close(fig)
+    
+    widgets['button_update'].on_clicked(update)
+    widgets['button_done'].on_clicked(done)
+
+
+def hillshade_widget(state: ViewerState, fig: Any, im: Any) -> None:
+    """
+    Widget for adding and customizing a hillshade overlay.
+    
+    Adds text boxes for transparency (alpha), exaggeration (z-factor), and altitude angle,
+    Update button to preview changes, and Done button to close and save values.
+    
+    Updates state.user_inputs with 'hillshade_alpha', 'hillshade_exaggeration', and 'hillshade_altitude' keys.
+    """
+    # Store widgets to prevent garbage collection
+    widgets = {}
+    
+    # Initial values
+    initial_alpha = 0.3
+    initial_exaggeration = 1.0
+    initial_altitude = 45.0  # degrees
+    
+    # Create text input boxes and buttons (3 rows)
+    # Row 1: Alpha, Exaggeration
+    ax_alpha = plt.axes([0.15, 0.16, 0.12, 0.04])
+    ax_exag = plt.axes([0.32, 0.16, 0.12, 0.04])
+    
+    # Row 2: Altitude
+    ax_altitude = plt.axes([0.15, 0.10, 0.12, 0.04])
+    
+    # Row 3: Buttons
+    ax_update = plt.axes([0.49, 0.10, 0.12, 0.04])
+    ax_done = plt.axes([0.66, 0.10, 0.12, 0.04])
+    
+    widgets['textbox_alpha'] = TextBox(ax_alpha, 'Alpha:', initial=f'{initial_alpha:.2f}')
+    widgets['textbox_exag'] = TextBox(ax_exag, 'Exag:', initial=f'{initial_exaggeration:.2f}')
+    widgets['textbox_altitude'] = TextBox(ax_altitude, 'Altitude°:', initial=f'{initial_altitude:.1f}')
+    widgets['button_update'] = Button(ax_update, 'Update')
+    widgets['button_done'] = Button(ax_done, 'Done')
+    
+    # Initialize user_inputs
+    state.user_inputs['hillshade_alpha'] = initial_alpha
+    state.user_inputs['hillshade_exaggeration'] = initial_exaggeration
+    state.user_inputs['hillshade_altitude'] = initial_altitude
+    
+    # Get the axes from the image
+    ax = im.axes
+    
+    # Compute initial hillshade
+    hillshade = _compute_hillshade(
+        state.display_data, 
+        altitude=initial_altitude,
+        z_factor=initial_exaggeration
+    )
+    
+    # Add hillshade overlay
+    widgets['hillshade_im'] = ax.imshow(
+        hillshade,
+        cmap='gray',
+        alpha=initial_alpha,
+        vmin=0,
+        vmax=255,
+        zorder=2  # Render on top of the raster
+    )
+    
+    # Ensure raster is below
+    im.set_zorder(1)
+    
+    def update(event):
+        try:
+            alpha = float(widgets['textbox_alpha'].text)
+            exaggeration = float(widgets['textbox_exag'].text)
+            altitude = float(widgets['textbox_altitude'].text)
+            
+            # Validate inputs
+            if 0 <= alpha <= 1 and exaggeration > 0 and 0 <= altitude <= 90:
+                # Recompute hillshade with new parameters
+                hillshade = _compute_hillshade(
+                    state.display_data, 
+                    altitude=altitude,
+                    z_factor=exaggeration
+                )
+                
+                # Update hillshade image
+                widgets['hillshade_im'].set_data(hillshade)
+                widgets['hillshade_im'].set_alpha(alpha)
+                
+                # Store values
+                state.user_inputs['hillshade_alpha'] = alpha
+                state.user_inputs['hillshade_exaggeration'] = exaggeration
+                state.user_inputs['hillshade_altitude'] = altitude
+                
                 fig.canvas.draw_idle()
         except ValueError:
             pass
@@ -268,4 +415,42 @@ def interactive_min_max(raster_path: str | Path, band: int = 1, minmax: tuple[fl
     return state.user_inputs['min'], state.user_inputs['max']
 
 
-__all__ = ["interactive_raster_viewer", "minmax_widget", "interactive_min_max", "display_raster", "ViewerState"]
+def interactive_hillshade(
+    raster_path: str | Path, 
+    band: int = 1, 
+    minmax: tuple[float | None, float | None] = (None, None)
+) -> tuple[float, float, float]:
+    """
+    Display a raster with hillshade overlay and collect transparency/exaggeration/altitude values.
+    
+    Parameters
+    ----------
+    raster_path : str or Path
+        Path to the raster file
+    band : int, optional
+        Band number to display (1-indexed), default is 1
+    minmax : tuple[float | None, float | None], optional
+        Min and max values for color range. If (None, None), auto-calculated from data.
+        
+    Returns
+    -------
+    tuple[float, float, float]
+        (alpha, exaggeration, altitude) - hillshade transparency, vertical exaggeration, and altitude angle (degrees)
+    """
+    state = interactive_raster_viewer(raster_path, band, minmax, widgets=[hillshade_widget])
+    return (
+        state.user_inputs['hillshade_alpha'], 
+        state.user_inputs['hillshade_exaggeration'],
+        state.user_inputs['hillshade_altitude']
+    )
+
+
+__all__ = [
+    "interactive_raster_viewer",
+    "minmax_widget",
+    "hillshade_widget",
+    "interactive_min_max",
+    "interactive_hillshade",
+    "display_raster",
+    "ViewerState"
+]
