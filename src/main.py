@@ -14,12 +14,15 @@ def main() -> None:
     gdal.UseExceptions()
     print(f"GDAL version: {gdal.VersionInfo('RELEASE_NAME')}")
 
-    tutorial_dir = Path("data/usgs_standard_export/rasters_USGS1m")
-    output_path = Path("outputs/usgs_standard_export/rasters_USGS1m/merged.tif")
+    tutorial_dir = Path("data/tutorial_2")
+    output_path = Path("outputs/tutorial_merged.tif")
 
     print(f"Merging rasters from {tutorial_dir} -> {output_path}")
     merged = merge_tifs(tutorial_dir, output_path)
     print(f"Merged raster written to {merged}")
+
+
+    
 
 
 if __name__ == "__main__":
