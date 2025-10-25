@@ -9,7 +9,7 @@ import rasterio
 from rasterio.enums import Resampling
 
 
-def preview_tif(raster_path: str | Path, band: int = 1) -> None:
+def preview_tif(raster_path: str | Path, band: int = 1, minmax: tuple[float | None, float | None] = (None, None)) -> None:
     """
     Open and display a raster file with interactive pixel value viewer.
     
@@ -19,6 +19,8 @@ def preview_tif(raster_path: str | Path, band: int = 1) -> None:
         Path to the raster file
     band : int, optional
         Band number to display (1-indexed), default is 1
+    minmax : tuple[float | None, float | None], optional
+        Min and max values for color range. If (None, None), auto-calculated from data.
     """
     raster_path = Path(raster_path)
     
@@ -54,12 +56,15 @@ def preview_tif(raster_path: str | Path, band: int = 1) -> None:
             display_data = np.ma.masked_equal(display_data, nodata)
             full_data = np.ma.masked_equal(full_data, nodata)
         
-        # Quick stats from display data
-        vmin, vmax = np.nanpercentile(display_data.compressed() if np.ma.is_masked(display_data) else display_data, [2, 98])
+        # Use provided minmax or auto-calculate
+        if minmax[0] is not None and minmax[1] is not None:
+            vmin, vmax = minmax
+        else:
+            vmin, vmax = np.nanpercentile(display_data.compressed() if np.ma.is_masked(display_data) else display_data, [2, 98])
     
     # Create figure
     fig, ax = plt.subplots(figsize=(10, 8))
-    im = ax.imshow(display_data, cmap='terrain', vmin=vmin, vmax=vmax)
+    im = ax.imshow(display_data, cmap='YlGnBu', vmin=vmin, vmax=vmax)
     plt.colorbar(im, ax=ax, label='Value')
     
     title = ax.set_title(f'{raster_path.name} (Band {band})\nHover for pixel values')

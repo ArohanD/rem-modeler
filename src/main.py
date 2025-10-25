@@ -38,6 +38,11 @@ def main() -> None:
     river_min_elevation = float(input("Enter the minimum elevation for the river: "))
     river_max_elevation = float(input("Enter the maximum elevation for the river: "))
     print(f"Proceeding with a minimum elevation of {river_min_elevation} and a maximum elevation of {river_max_elevation}")
+
+    # Preview the raster with the specified min and max elevation
+    preview_tif(merged, band, (river_min_elevation, river_max_elevation))
+
+
     
 
 
