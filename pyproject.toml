@@ -9,6 +9,9 @@ dependencies = [
     "rasterio>=1.4.3",
     "matplotlib>=3.8.0",
     "numpy>=1.26.0",
+    "scipy>=1.11.0",
+    "scikit-image>=0.22.0",
+    "shapely>=2.0.0",
 ]
 
 [tool.uv.sources]
