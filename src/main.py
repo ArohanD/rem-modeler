@@ -27,11 +27,20 @@ def main() -> None:
     # Print Merged Raster Stats
     # Want to know the distribution of values in the merged raster
     print_raster_stats(merged)
+
+    # Allow the user to input a min and max elevation for the river
+    river_min_elevation = float(input("Enter the minimum elevation for the river: "))
+    river_max_elevation = float(input("Enter the maximum elevation for the river: "))
+    print(f"Proceeding with a minimum elevation of {river_min_elevation} and a maximum elevation of {river_max_elevation}")
     
 
 
 if __name__ == "__main__":
     main()
+
+
+
+
 
 
 

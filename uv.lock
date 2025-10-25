@@ -1,6 +1,11 @@
 version = 1
 revision = 3
 requires-python = ">=3.11"
+resolution-markers = [
+    "sys_platform == 'linux'",
+    "sys_platform == 'win32'",
+    "sys_platform != 'linux' and sys_platform != 'win32'",
+]
 
 [[package]]
 name = "affine"
@@ -70,13 +75,17 @@ name = "code"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "gdal" },
+    { name = "gdal", version = "3.11.1", source = { registry = "https://nathanjmcdougall.github.io/geospatial-wheels-index/" }, marker = "sys_platform == 'win32'" },
+    { name = "gdal", version = "3.11.4", source = { registry = "https://gitlab.com/api/v4/projects/61637378/packages/pypi/simple" }, marker = "sys_platform == 'linux'" },
+    { name = "gdal", version = "3.11.4", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux' and sys_platform != 'win32'" },
     { name = "rasterio" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "gdal", specifier = "==3.10.3" },
+    { name = "gdal", marker = "sys_platform != 'linux' and sys_platform != 'win32'", specifier = ">=3.11.1" },
+    { name = "gdal", marker = "sys_platform == 'linux'", specifier = ">=3.11.1", index = "https://gitlab.com/api/v4/projects/61637378/packages/pypi/simple" },
+    { name = "gdal", marker = "sys_platform == 'win32'", specifier = ">=3.11.1", index = "https://nathanjmcdougall.github.io/geospatial-wheels-index/" },
     { name = "rasterio", specifier = ">=1.4.3" },
 ]
 
@@ -91,9 +100,55 @@ wheels = [
 
 [[package]]
 name = "gdal"
-version = "3.10.3"
+version = "3.11.1"
+source = { registry = "https://nathanjmcdougall.github.io/geospatial-wheels-index/" }
+resolution-markers = [
+    "sys_platform == 'win32'",
+]
+wheels = [
+    { url = "https://github.com/cgohlke/geospatial-wheels/releases/download/v2025.7.4/gdal-3.11.1-cp311-cp311-win32.whl" },
+    { url = "https://github.com/cgohlke/geospatial-wheels/releases/download/v2025.7.4/gdal-3.11.1-cp311-cp311-win_amd64.whl" },
+    { url = "https://github.com/cgohlke/geospatial-wheels/releases/download/v2025.7.4/gdal-3.11.1-cp311-cp311-win_arm64.whl" },
+    { url = "https://github.com/cgohlke/geospatial-wheels/releases/download/v2025.7.4/gdal-3.11.1-cp312-cp312-win32.whl" },
+    { url = "https://github.com/cgohlke/geospatial-wheels/releases/download/v2025.7.4/gdal-3.11.1-cp312-cp312-win_amd64.whl" },
+    { url = "https://github.com/cgohlke/geospatial-wheels/releases/download/v2025.7.4/gdal-3.11.1-cp312-cp312-win_arm64.whl" },
+    { url = "https://github.com/cgohlke/geospatial-wheels/releases/download/v2025.7.4/gdal-3.11.1-cp313-cp313-win32.whl" },
+    { url = "https://github.com/cgohlke/geospatial-wheels/releases/download/v2025.7.4/gdal-3.11.1-cp313-cp313-win_amd64.whl" },
+    { url = "https://github.com/cgohlke/geospatial-wheels/releases/download/v2025.7.4/gdal-3.11.1-cp313-cp313-win_arm64.whl" },
+    { url = "https://github.com/cgohlke/geospatial-wheels/releases/download/v2025.7.4/gdal-3.11.1-cp314-cp314-win32.whl" },
+    { url = "https://github.com/cgohlke/geospatial-wheels/releases/download/v2025.7.4/gdal-3.11.1-cp314-cp314-win_amd64.whl" },
+    { url = "https://github.com/cgohlke/geospatial-wheels/releases/download/v2025.7.4/gdal-3.11.1-cp314-cp314-win_arm64.whl" },
+]
+
+[[package]]
+name = "gdal"
+version = "3.11.4"
+source = { registry = "https://gitlab.com/api/v4/projects/61637378/packages/pypi/simple" }
+resolution-markers = [
+    "sys_platform == 'linux'",
+]
+sdist = { url = "https://gitlab.com/api/v4/projects/61637378/packages/pypi/files/c28cd5ffda3df98555e21083d922762b0a095d8f10292e2ec60ee0d55651d74a/gdal-3.11.4.tar.gz", hash = "sha256:c28cd5ffda3df98555e21083d922762b0a095d8f10292e2ec60ee0d55651d74a" }
+wheels = [
+    { url = "https://gitlab.com/api/v4/projects/61637378/packages/pypi/files/913dcc6f167b0bf31d89515307c3f4ca7c29b59f4b88488d4d9920344fc3834c/gdal-3.11.4-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:913dcc6f167b0bf31d89515307c3f4ca7c29b59f4b88488d4d9920344fc3834c" },
+    { url = "https://gitlab.com/api/v4/projects/61637378/packages/pypi/files/9f779885d9e0e0b1a1c833128e09cc631bac719aeb26d3210cb6d69e56eb1bd7/gdal-3.11.4-cp311-cp311-musllinux_1_2_x86_64.whl", hash = "sha256:9f779885d9e0e0b1a1c833128e09cc631bac719aeb26d3210cb6d69e56eb1bd7" },
+    { url = "https://gitlab.com/api/v4/projects/61637378/packages/pypi/files/b3e70618ced677110c98a6939aadd9f71df141014114ad5f54fed07d7d667827/gdal-3.11.4-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:b3e70618ced677110c98a6939aadd9f71df141014114ad5f54fed07d7d667827" },
+    { url = "https://gitlab.com/api/v4/projects/61637378/packages/pypi/files/f4cc65df96b7592f29e8327b51fe1abdae4673addc3a83d030a90a5df5661909/gdal-3.11.4-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:f4cc65df96b7592f29e8327b51fe1abdae4673addc3a83d030a90a5df5661909" },
+    { url = "https://gitlab.com/api/v4/projects/61637378/packages/pypi/files/274b69231206532e5edd7cd99acd92ed83eb6549604fb6eb9f39379898be745e/gdal-3.11.4-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:274b69231206532e5edd7cd99acd92ed83eb6549604fb6eb9f39379898be745e" },
+    { url = "https://gitlab.com/api/v4/projects/61637378/packages/pypi/files/2afdf6f96a67b646626871b45612ffe21a4f19e5971ba6c5cd63e8b7ce28eaad/gdal-3.11.4-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:2afdf6f96a67b646626871b45612ffe21a4f19e5971ba6c5cd63e8b7ce28eaad" },
+    { url = "https://gitlab.com/api/v4/projects/61637378/packages/pypi/files/5137b5648d2cd800175cfeae471807e2244ded3a5a0d9cc8c770038965bd768c/gdal-3.11.4-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:5137b5648d2cd800175cfeae471807e2244ded3a5a0d9cc8c770038965bd768c" },
+    { url = "https://gitlab.com/api/v4/projects/61637378/packages/pypi/files/40d27d70dfd1798beb9dc3b9fa4b95cb5f847ff191f6c28f3c6bbbad153892c1/gdal-3.11.4-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:40d27d70dfd1798beb9dc3b9fa4b95cb5f847ff191f6c28f3c6bbbad153892c1" },
+    { url = "https://gitlab.com/api/v4/projects/61637378/packages/pypi/files/a27ca2974502ba3bb286c31d7610519a88be7ce58e75fcc95bf60ab523866f17/gdal-3.11.4-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:a27ca2974502ba3bb286c31d7610519a88be7ce58e75fcc95bf60ab523866f17" },
+    { url = "https://gitlab.com/api/v4/projects/61637378/packages/pypi/files/3bf6079a8ceefa9cfe05988dcdb89fdf20023ef4d9286f624d0bdc9c88778529/gdal-3.11.4-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:3bf6079a8ceefa9cfe05988dcdb89fdf20023ef4d9286f624d0bdc9c88778529" },
+]
+
+[[package]]
+name = "gdal"
+version = "3.11.4"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/06/f9/a9a9496c8dc558c4c16a0c53283501fe3098b26536d5f475d378c8ed3437/gdal-3.10.3.tar.gz", hash = "sha256:b5550650daeeae8e41091581d9aea7d75a9f15b0ebbeb8c96e37458fa02264cd", size = 838170, upload-time = "2025-04-07T09:57:20.729Z" }
+resolution-markers = [
+    "sys_platform != 'linux' and sys_platform != 'win32'",
+]
+sdist = { url = "https://files.pythonhosted.org/packages/62/e0/1840d476bfd2d1e8c22dacb612027a16ad1dfba60d5d4379bdaaf6a1545f/gdal-3.11.4.tar.gz", hash = "sha256:c28cd5ffda3df98555e21083d922762b0a095d8f10292e2ec60ee0d55651d74a", size = 878351, upload-time = "2025-09-11T09:28:00.097Z" }
 
 [[package]]
 name = "numpy"
