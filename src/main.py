@@ -5,7 +5,7 @@ from pathlib import Path
 from osgeo import gdal
 
 from .utils import merge_tifs, print_raster_stats
-from .interfaces import preview_tif
+from .interfaces import interactive_min_max
 
 
 def main() -> None:
@@ -32,7 +32,7 @@ def main() -> None:
     # Open an interactive panel of the raster where the user can get the value of
     # a pixel under the cursor for a specified band
     band = 1
-    river_min_elevation, river_max_elevation = preview_tif(merged, band)
+    river_min_elevation, river_max_elevation = interactive_min_max(merged, band)
     
     print(f"Selected elevation range: {river_min_elevation:.2f} to {river_max_elevation:.2f}")
 
