@@ -5,6 +5,7 @@ from pathlib import Path
 from osgeo import gdal
 
 from .utils import merge_tifs, print_raster_stats
+from .interfaces import preview_tif
 
 
 def main() -> None:
@@ -27,6 +28,11 @@ def main() -> None:
     # Print Merged Raster Stats
     # Want to know the distribution of values in the merged raster
     print_raster_stats(merged)
+
+    # Open an interactive panel of the raster where the user can get the value of
+    # a pixel under the cursor for a specified band
+    band = 1
+    preview_tif(merged, band)
 
     # Allow the user to input a min and max elevation for the river
     river_min_elevation = float(input("Enter the minimum elevation for the river: "))
