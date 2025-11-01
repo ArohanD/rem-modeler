@@ -1,4 +1,13 @@
-"""Entry point for the GIS 584 project package."""
+"""Entry point for the GIS 584 project package.
+
+This module provides a CLI interface for raster processing. For an interactive
+web-based dashboard, use the Streamlit app instead:
+
+    streamlit run app.py
+
+The Streamlit dashboard provides a step-by-step workflow with interactive
+visualizations at each stage.
+"""
 
 from pathlib import Path
 
@@ -9,8 +18,13 @@ from .interfaces import interactive_min_max, interactive_hillshade
 
 
 def main() -> None:
-    """Run the main application routine."""
+    """Run the main application routine (CLI mode).
+    
+    For an interactive web dashboard, run: streamlit run app.py
+    """
     print("Hello from GIS 584 project!")
+    print("\nNote: For an interactive web dashboard, run: streamlit run app.py")
+    print("=" * 60)
 
     gdal.UseExceptions()
     print(f"GDAL version: {gdal.VersionInfo('RELEASE_NAME')}")
