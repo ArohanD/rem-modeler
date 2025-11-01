@@ -9,13 +9,18 @@ import matplotlib.pyplot as plt
 import streamlit as st
 import rasterio
 from rasterio.enums import Resampling
+import plotly.graph_objects as go
+import matplotlib.cm as cm
+from PIL import Image
+import io
+import base64
 
 
 def _load_raster_data(
     raster_path: Path, 
     band: int, 
     minmax: tuple[float | None, float | None] = (None, None),
-    max_dim: int = 2000
+    max_dim: int = 1000  # Reduced from 2000 for better performance
 ) -> tuple[np.ndarray, np.ndarray, Any, int, int, float]:
     """Load and prepare raster data for display."""
     with rasterio.open(raster_path) as src:
@@ -35,8 +40,9 @@ def _load_raster_data(
             resampling=Resampling.bilinear
         )
         
-        # Read full resolution data for pixel lookups
-        full_data = src.read(band)
+        # Note: Full resolution data loading removed for performance
+        # We use display_data for hover values instead
+        full_data = display_data  # Use display data as placeholder
         
         nodata = src.nodata
         transform = src.transform
@@ -49,7 +55,7 @@ def _load_raster_data(
         # Calculate initial color range
         data_for_stats = display_data.compressed() if np.ma.is_masked(display_data) else display_data
         
-        if minmax[0] is not None and minmax[1] is not None:
+        if minmax is not None and minmax[0] is not None and minmax[1] is not None:
             vmin, vmax = minmax
         else:
             vmin, vmax = np.nanpercentile(data_for_stats, [2, 98])
@@ -104,6 +110,16 @@ def _compute_hillshade(
     return shaded.astype(np.uint8)
 
 
+def _matplotlib_to_plotly_colorscale(cmap_name: str, n_colors: int = 256) -> list[list[float | str]]:
+    """Convert matplotlib colormap to Plotly colorscale."""
+    cmap = cm.get_cmap(cmap_name)
+    colors = []
+    for i in range(n_colors):
+        rgba = cmap(i / (n_colors - 1))
+        colors.append([i / (n_colors - 1), f'rgb({int(rgba[0]*255)},{int(rgba[1]*255)},{int(rgba[2]*255)})'])
+    return colors
+
+
 def display_raster_streamlit(
     raster_path: str | Path,
     band: int = 1,
@@ -113,7 +129,11 @@ def display_raster_streamlit(
     show_colorbar: bool = True
 ) -> tuple[np.ndarray, float, float]:
     """
-    Display a raster in Streamlit with matplotlib.
+    Display a raster in Streamlit with interactive Plotly visualization.
+    
+    Features:
+    - Zoom and pan
+    - Hover to see pixel values and coordinates
     
     Parameters
     ----------
@@ -141,27 +161,56 @@ def display_raster_streamlit(
         raise FileNotFoundError(f"Raster file not found: {raster_path}")
     
     # Load raster data
-    display_data, _, _, _, _, vmin, vmax, _ = _load_raster_data(raster_path, band, minmax)
+    display_data, full_data, transform, height, width, vmin, vmax, scale = _load_raster_data(raster_path, band, minmax)
     
-    # Create figure
-    fig, ax = plt.subplots(figsize=(12, 10))
+    # Handle masked arrays
+    if np.ma.is_masked(display_data):
+        # Convert masked array to regular array with NaN
+        display_data = np.ma.filled(display_data, np.nan)
     
-    im = ax.imshow(display_data, cmap=cmap, vmin=vmin, vmax=vmax)
+    # Get colormap
+    colorscale = _matplotlib_to_plotly_colorscale(cmap)
     
-    if show_colorbar:
-        plt.colorbar(im, ax=ax, label='Value')
+    # Create Plotly figure
+    fig = go.Figure()
     
+    # Flip the y-axis for proper display
+    display_data_flipped = np.flipud(display_data)
+    
+    # Use Plotly's built-in hover with custom hovertemplate for better performance
+    # This is much faster than pre-computing hover text for every pixel
+    fig.add_trace(go.Heatmap(
+        z=display_data_flipped,
+        colorscale=colorscale,
+        zmin=vmin,
+        zmax=vmax,
+        colorbar=dict(title='Value') if show_colorbar else None,
+        hovertemplate=(
+            'X: %{x:.0f}<br>'
+            'Y: %{y:.0f}<br>'
+            'Value: %{z:.2f}<extra></extra>'
+        )
+    ))
+    
+    # Set title and labels
     if title:
-        ax.set_title(title)
+        fig.update_layout(title=title)
     else:
-        ax.set_title(f'{raster_path.name} (Band {band})')
+        fig.update_layout(title=f'{raster_path.name} (Band {band})')
     
-    ax.set_xlabel('X (pixels)')
-    ax.set_ylabel('Y (pixels)')
+    fig.update_xaxes(title_text='X (pixels)')
+    fig.update_yaxes(title_text='Y (pixels)')
     
-    plt.tight_layout()
-    st.pyplot(fig)
-    plt.close(fig)
+    # Set aspect ratio and layout
+    fig.update_layout(
+        width=1000,
+        height=800,
+        autosize=True,
+        dragmode='pan',
+        hovermode='closest'
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
     
     return display_data, vmin, vmax
 
@@ -178,7 +227,12 @@ def display_raster_with_hillshade_streamlit(
     title: str | None = None
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Display a raster with hillshade overlay in Streamlit.
+    Display a raster with hillshade overlay in Streamlit with interactive Plotly visualization.
+    
+    Features:
+    - Zoom and pan
+    - Hover to see pixel values and coordinates
+    - Hillshade overlay with adjustable transparency
     
     Parameters
     ----------
@@ -212,9 +266,13 @@ def display_raster_with_hillshade_streamlit(
         raise FileNotFoundError(f"Raster file not found: {raster_path}")
     
     # Load raster data
-    display_data, _, _, _, _, vmin, vmax, _ = _load_raster_data(raster_path, band, minmax)
+    display_data, full_data, transform, height, width, vmin, vmax, scale = _load_raster_data(raster_path, band, minmax)
     
-    # Compute hillshade
+    # Handle masked arrays
+    if np.ma.is_masked(display_data):
+        display_data = np.ma.filled(display_data, np.nan)
+    
+    # Compute hillshade (matches original matplotlib implementation)
     hillshade = _compute_hillshade(
         display_data,
         altitude=altitude,
@@ -222,28 +280,59 @@ def display_raster_with_hillshade_streamlit(
         z_factor=exaggeration
     )
     
-    # Create figure
-    fig, ax = plt.subplots(figsize=(12, 10))
+    # Get colormap for colorbar
+    colorscale = _matplotlib_to_plotly_colorscale(cmap)
     
-    # Display elevation raster
-    im = ax.imshow(display_data, cmap=cmap, vmin=vmin, vmax=vmax)
+    # Apply hillshade effect to elevation data for display
+    # Normalize hillshade to 0-1 (grayscale)
+    hillshade_norm = hillshade / 255.0
     
-    # Overlay hillshade
-    ax.imshow(hillshade, cmap='gray', alpha=alpha, vmin=0, vmax=255)
+    # Apply hillshade effect: darken elevation values based on hillshade
+    # Formula: display_value = elevation * (1 - alpha * (1 - hillshade_factor))
+    # This darkens shadowed areas while preserving elevation colors
+    hillshade_factor = 1 - alpha * (1 - hillshade_norm)
+    display_data_shaded = display_data * hillshade_factor
     
-    plt.colorbar(im, ax=ax, label='Elevation')
+    # Flip for display
+    display_data_shaded_flipped = np.flipud(display_data_shaded)
+    display_data_flipped = np.flipud(display_data)
     
+    # Create Plotly figure (same approach as display_raster_streamlit)
+    fig = go.Figure()
+    
+    # Display the shaded elevation data with the colormap
+    fig.add_trace(go.Heatmap(
+        z=display_data_shaded_flipped,
+        colorscale=colorscale,
+        zmin=vmin * (1 - alpha),  # Adjust min to account for darkening
+        zmax=vmax,
+        colorbar=dict(title='Elevation'),
+        hovertemplate=(
+            'X: %{x:.0f}<br>'
+            'Y: %{y:.0f}<br>'
+            'Elevation: %{z:.2f}<extra></extra>'
+        ),
+    ))
+    
+    # Set title and labels
     if title:
-        ax.set_title(title)
+        fig.update_layout(title=title)
     else:
-        ax.set_title(f'{raster_path.name} (Band {band}) with Hillshade')
+        fig.update_layout(title=f'{raster_path.name} (Band {band}) with Hillshade')
     
-    ax.set_xlabel('X (pixels)')
-    ax.set_ylabel('Y (pixels)')
+    fig.update_xaxes(title_text='X (pixels)')
+    fig.update_yaxes(title_text='Y (pixels)')
     
-    plt.tight_layout()
-    st.pyplot(fig)
-    plt.close(fig)
+    # Set aspect ratio and layout
+    fig.update_layout(
+        width=1000,
+        height=800,
+        autosize=True,
+        dragmode='pan',
+        hovermode='closest'
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
     
     return display_data, hillshade
 

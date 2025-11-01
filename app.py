@@ -3,6 +3,7 @@
 import streamlit as st
 from pathlib import Path
 from osgeo import gdal
+import traceback
 
 from src.utils import merge_tifs, print_raster_stats
 from src.interfaces.streamlit_interfaces import (
@@ -126,6 +127,8 @@ if step == "1. Merge Rasters":
             )
         except Exception as e:
             st.error(f"Error displaying raster: {e}")
+            with st.expander("🔍 Full Error Details (Click to expand)"):
+                st.code(traceback.format_exc(), language="python")
     
     # Also check default path
     default_merged = Path("outputs/tutorial_merged.tif")
@@ -281,6 +284,8 @@ elif step == "3. Set Elevation Range":
             )
         except Exception as e:
             st.error(f"Error displaying raster: {e}")
+            with st.expander("🔍 Full Error Details (Click to expand)"):
+                st.code(traceback.format_exc(), language="python")
 
 # Step 4: Add Hillshade
 elif step == "4. Add Hillshade":
@@ -382,6 +387,8 @@ elif step == "4. Add Hillshade":
         )
     except Exception as e:
         st.error(f"Error displaying raster with hillshade: {e}")
+        with st.expander("🔍 Full Error Details (Click to expand)"):
+            st.code(traceback.format_exc(), language="python")
     
     # Summary
     st.markdown("---")
