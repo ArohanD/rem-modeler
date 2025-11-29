@@ -1507,88 +1507,6 @@ def display_centerline_overlay(
     plt.tight_layout()
     plt.show()
 
-def interactive_centerline(
-    raster_path: str | Path,
-    band: int = 1,
-    minmax: tuple[float | None, float | None] = (None, None),
-    hillshade_params: tuple[float, float, float] | None = None,
-    manual: bool = False
-) -> LineString:
-    """
-    Display a raster and compute/digitize river centerline.
-    
-    Parameters
-    ----------
-    raster_path : str or Path
-        Path to the raster file
-    band : int, optional
-        Band number to display (1-indexed), default is 1
-    minmax : tuple[float | None, float | None], optional
-        Min and max values defining river extent. If (None, None), auto-calculated.
-    hillshade_params : tuple[float, float, float], optional
-        (alpha, exaggeration, altitude) from previous hillshade step
-    manual : bool, optional
-        If True, use manual digitization. If False, use automatic extraction.
-        
-    Returns
-    -------
-    LineString
-        Shapely LineString representing the river centerline in geographic coordinates
-    """
-    # Create initial state with hillshade params if provided
-    state = _load_raster_data(Path(raster_path), band, minmax)
-    
-    if hillshade_params:
-        state.user_inputs['hillshade_alpha'] = hillshade_params[0]
-        state.user_inputs['hillshade_exaggeration'] = hillshade_params[1]
-        state.user_inputs['hillshade_altitude'] = hillshade_params[2]
-    
-    # Now use the viewer with pre-populated state
-    # We'll recreate the viewer but with the state already initialized
-    fig = plt.figure(figsize=(10, 9))
-    ax = plt.axes([0.1, 0.25, 0.8, 0.7])
-    
-    im = ax.imshow(state.display_data, cmap='YlGnBu', vmin=state.vmin, vmax=state.vmax)
-    plt.colorbar(im, ax=ax, label='Value')
-    
-    title = ax.set_title(f'{state.raster_path.name} (Band {state.band})\nHover for pixel values')
-    
-    # Set up hover functionality
-    def on_move(event):
-        if event.inaxes != ax:
-            return
-        
-        display_col = int(event.xdata + 0.5)
-        display_row = int(event.ydata + 0.5)
-        
-        if 0 <= display_row < state.out_height and 0 <= display_col < state.out_width:
-            full_col = int(display_col * state.scale)
-            full_row = int(display_row * state.scale)
-            
-            if 0 <= full_row < state.height and 0 <= full_col < state.width:
-                value = state.full_data[full_row, full_col]
-                geo_x, geo_y = state.transform * (full_col + 0.5, full_row + 0.5)
-                
-                val_str = "NoData" if np.ma.is_masked(value) else f"{value:.2f}"
-                title.set_text(
-                    f'{state.raster_path.name} (Band {state.band})\n'
-                    f'Pixel: ({full_row}, {full_col}) | Value: {val_str} | Coords: ({geo_x:.1f}, {geo_y:.1f})'
-                )
-                fig.canvas.draw_idle()
-    
-    fig.canvas.mpl_connect('motion_notify_event', on_move)
-    
-    # Add appropriate centerline widget
-    if manual:
-        widgets = manual_centerline_widget(state, fig, im)
-    else:
-        widgets = centerline_widget(state, fig, im)
-    
-    plt.show()
-    
-    return state.user_inputs.get('centerline_geom')
-
-
 def interactive_osm_centerline(
     raster_path: str | Path,
     osm_centerline: LineString,
@@ -1725,18 +1643,18 @@ def interactive_osm_centerline(
     ax.set_ylabel('Northing (m)')
     
     # Create control widgets - simplified interface
-    # Row 1: Sliders for snap radius and point spacing
-    ax_radius = plt.axes([0.18, 0.14, 0.30, 0.03])
-    ax_spacing = plt.axes([0.58, 0.14, 0.30, 0.03])
-    slider_radius = Slider(ax_radius, 'Snap Radius (m)', 10, 300, valinit=initial_snap_radius, valstep=10)
+    # Stacked sliders
+    ax_spacing = plt.axes([0.22, 0.16, 0.65, 0.025])  # Top slider
+    ax_radius = plt.axes([0.22, 0.12, 0.65, 0.025])   # Bottom slider
     slider_spacing = Slider(ax_spacing, 'Point Spacing (m)', 5, 100, valinit=20, valstep=5)
+    slider_radius = Slider(ax_radius, 'Snap Radius (m)', 10, 300, valinit=initial_snap_radius, valstep=10)
     state['point_spacing'] = 20.0  # Default to tighter spacing for better curve following
     
-    # Row 2: Action buttons
-    ax_recompute = plt.axes([0.15, 0.06, 0.15, 0.05])
-    ax_show_hide = plt.axes([0.35, 0.06, 0.15, 0.05])
-    ax_reset = plt.axes([0.55, 0.06, 0.12, 0.05])
-    ax_done = plt.axes([0.72, 0.06, 0.12, 0.05])
+    # Action buttons row
+    ax_recompute = plt.axes([0.15, 0.05, 0.15, 0.045])
+    ax_show_hide = plt.axes([0.35, 0.05, 0.15, 0.045])
+    ax_reset = plt.axes([0.55, 0.05, 0.12, 0.045])
+    ax_done = plt.axes([0.72, 0.05, 0.12, 0.045])
     
     btn_recompute = Button(ax_recompute, 'Recompute')
     btn_show_hide = Button(ax_show_hide, 'Hide Line')
@@ -1935,7 +1853,6 @@ __all__ = [
     "manual_centerline_widget",
     "interactive_min_max",
     "interactive_hillshade",
-    "interactive_centerline",
     "derive_centerline",
     "derive_centerline_interactive",
     "interactive_osm_centerline",
