@@ -1115,29 +1115,201 @@ def _build_linestrings_from_osm(elements: list[dict]) -> list[LineString]:
     return linestrings
 
 
+def _densify_line(line: LineString, max_segment_length: float) -> LineString:
+    """
+    Densify a LineString by adding points so no segment exceeds max_segment_length.
+    
+    This ensures the line has enough points to follow curves when snapping.
+    
+    Parameters
+    ----------
+    line : LineString
+        Input line geometry
+    max_segment_length : float
+        Maximum distance between consecutive points (in map units)
+        
+    Returns
+    -------
+    LineString
+        Densified line with additional interpolated points
+    """
+    coords = list(line.coords)
+    densified_coords = [coords[0]]
+    
+    for i in range(1, len(coords)):
+        start = np.array(coords[i-1])
+        end = np.array(coords[i])
+        segment_length = np.linalg.norm(end - start)
+        
+        if segment_length > max_segment_length:
+            # Add intermediate points
+            num_segments = int(np.ceil(segment_length / max_segment_length))
+            for j in range(1, num_segments):
+                t = j / num_segments
+                interp_point = start + t * (end - start)
+                densified_coords.append(tuple(interp_point))
+        
+        densified_coords.append(coords[i])
+    
+    return LineString(densified_coords)
+
+
+def _snap_centerline_to_channel(
+    centerline: LineString,
+    raster_path: Path,
+    search_radius: float = 100.0,
+    river_elev_range: tuple[float, float] | None = None,
+    point_spacing: float = 50.0
+) -> LineString:
+    """
+    Snap a centerline to the actual river channel by finding local elevation minima.
+    
+    First densifies the line to ensure enough points to follow curves, then snaps
+    each point to the local elevation minimum within the search radius.
+    
+    Parameters
+    ----------
+    centerline : LineString
+        The input centerline geometry in the raster's CRS
+    raster_path : Path
+        Path to the elevation raster
+    search_radius : float, optional
+        Search radius in map units (meters) to look for channel bottom. Default 100m.
+    river_elev_range : tuple[float, float], optional
+        (min_elev, max_elev) expected elevation range of the river. If provided,
+        only considers points within this range as valid channel locations.
+    point_spacing : float, optional
+        Maximum distance between points along the line (meters). Smaller values
+        allow the line to follow tighter curves. Default 50m.
+        
+    Returns
+    -------
+    LineString
+        Snapped centerline geometry
+    """
+    # Densify the line first to ensure we have enough points to follow curves
+    original_point_count = len(centerline.coords)
+    centerline = _densify_line(centerline, point_spacing)
+    print(f"Densified line: {original_point_count} -> {len(centerline.coords)} points (spacing: {point_spacing}m)")
+    
+    with rasterio.open(raster_path) as src:
+        transform = src.transform
+        data = src.read(1)
+        nodata = src.nodata
+        
+        # Mask nodata values
+        if nodata is not None:
+            data = np.ma.masked_equal(data, nodata)
+    
+    # Get pixel size for search window calculation
+    pixel_size = abs(transform[0])  # Assumes square pixels
+    search_pixels = int(search_radius / pixel_size)
+    
+    snapped_coords = []
+    original_coords = list(centerline.coords)
+    
+    print(f"Snapping {len(original_coords)} centerline points to channel (search radius: {search_radius}m)...")
+    
+    for i, (x, y) in enumerate(original_coords):
+        # Convert geographic coords to pixel coords
+        col, row = ~transform * (x, y)
+        col, row = int(col), int(row)
+        
+        # Define search window
+        row_min = max(0, row - search_pixels)
+        row_max = min(data.shape[0], row + search_pixels + 1)
+        col_min = max(0, col - search_pixels)
+        col_max = min(data.shape[1], col + search_pixels + 1)
+        
+        # Extract search window
+        window = data[row_min:row_max, col_min:col_max]
+        
+        if window.size == 0 or (np.ma.is_masked(window) and window.mask.all()):
+            # No valid data in window, keep original point
+            snapped_coords.append((x, y))
+            continue
+        
+        # If river elevation range is provided, mask out values outside range
+        if river_elev_range is not None:
+            min_elev, max_elev = river_elev_range
+            valid_mask = (window >= min_elev) & (window <= max_elev)
+            if not valid_mask.any():
+                # No points in river elevation range, keep original
+                snapped_coords.append((x, y))
+                continue
+            # Set non-river pixels to a high value so they won't be selected as minimum
+            window = np.where(valid_mask, window, np.inf)
+        
+        # Find the minimum elevation location in the window
+        if np.ma.is_masked(window):
+            window_filled = window.filled(np.inf)
+        else:
+            window_filled = window
+            
+        local_min_idx = np.unravel_index(np.argmin(window_filled), window_filled.shape)
+        
+        # Convert back to geographic coordinates
+        snap_row = row_min + local_min_idx[0]
+        snap_col = col_min + local_min_idx[1]
+        snap_x, snap_y = transform * (snap_col + 0.5, snap_row + 0.5)
+        
+        snapped_coords.append((snap_x, snap_y))
+    
+    # Smooth the snapped centerline to remove zigzag artifacts
+    snapped_line = LineString(snapped_coords)
+    
+    # Apply a simple moving average smoothing
+    if len(snapped_coords) > 5:
+        smoothed_coords = []
+        coords_array = np.array(snapped_coords)
+        
+        # Keep first 2 and last 2 points as-is
+        smoothed_coords.extend(snapped_coords[:2])
+        
+        # Apply 5-point moving average to middle points
+        for i in range(2, len(coords_array) - 2):
+            avg_x = np.mean(coords_array[i-2:i+3, 0])
+            avg_y = np.mean(coords_array[i-2:i+3, 1])
+            smoothed_coords.append((avg_x, avg_y))
+        
+        smoothed_coords.extend(snapped_coords[-2:])
+        snapped_line = LineString(smoothed_coords)
+    
+    print(f"Centerline snapped successfully")
+    return snapped_line
+
+
 def derive_centerline(
     raster_path: str | Path, 
     minmax: tuple[float | None, float | None] = (None, None),
     hillshade_params: tuple[float, float, float] | None = None,
-    show_overlay: bool = True
+    show_overlay: bool = True,
+    snap_to_channel: bool = True,
+    snap_radius: float = 100.0
 ) -> LineString | None:
     """
     Derive the river centerline by querying OpenStreetMap Overpass API.
     
     This function extracts the bounding box from the raster, queries OSM for
     waterways within that area, and returns a merged centerline geometry.
-    Optionally displays an interactive overlay of the centerline on the raster.
+    Optionally snaps the centerline to the actual channel bottom using elevation data.
     
     Parameters
     ----------
     raster_path : str or Path
         Path to the raster file
     minmax : tuple[float | None, float | None], optional
-        Min and max values for color range. If (None, None), auto-calculated from data.
+        Min and max values for color range, also used to define river elevation range
+        for snapping. If (None, None), auto-calculated from data.
     hillshade_params : tuple[float, float, float], optional
         (alpha, exaggeration, altitude) for hillshade overlay. If None, no hillshade applied.
     show_overlay : bool, optional
         If True, display an interactive plot with the centerline overlaid on the raster.
+    snap_to_channel : bool, optional
+        If True (default), snap the OSM centerline to the actual channel bottom
+        using the elevation data. This corrects for OSM georeferencing errors.
+    snap_radius : float, optional
+        Search radius in meters for snapping to channel. Default 100m.
         
     Returns
     -------
@@ -1198,6 +1370,17 @@ def derive_centerline(
     centerline_raster_crs = shapely_transform(transform_coords, centerline_wgs84)
     
     print(f"Centerline has {len(centerline_raster_crs.coords)} points")
+    
+    # Snap centerline to actual channel if requested
+    if snap_to_channel:
+        # Use minmax as the river elevation range if provided
+        river_elev_range = minmax if (minmax[0] is not None and minmax[1] is not None) else None
+        centerline_raster_crs = _snap_centerline_to_channel(
+            centerline_raster_crs,
+            raster_path,
+            search_radius=snap_radius,
+            river_elev_range=river_elev_range
+        )
     
     # Display overlay if requested
     if show_overlay:
@@ -1406,6 +1589,344 @@ def interactive_centerline(
     return state.user_inputs.get('centerline_geom')
 
 
+def interactive_osm_centerline(
+    raster_path: str | Path,
+    osm_centerline: LineString,
+    minmax: tuple[float | None, float | None] = (None, None),
+    hillshade_params: tuple[float, float, float] | None = None,
+    initial_snap_radius: float = 100.0
+) -> LineString:
+    """
+    Interactive interface to adjust OSM centerline snapping parameters.
+    
+    Displays the raster with the centerline and provides controls to adjust:
+    - Snap radius (how far to search for channel bottom)
+    - Point spacing (how densely to sample points for snapping)
+    - Show/hide centerline to inspect terrain
+    
+    Parameters
+    ----------
+    raster_path : str or Path
+        Path to the raster file
+    osm_centerline : LineString
+        The raw OSM centerline (already in raster CRS)
+    minmax : tuple[float | None, float | None], optional
+        Min and max values for color range display.
+    hillshade_params : tuple[float, float, float], optional
+        (alpha, exaggeration, altitude) for hillshade overlay.
+    initial_snap_radius : float, optional
+        Initial snap radius in meters. Default 100.
+        
+    Returns
+    -------
+    LineString
+        The snapped centerline
+    """
+    raster_path = Path(raster_path)
+    
+    # Load raster data
+    with rasterio.open(raster_path) as src:
+        max_dim = 2000
+        height, width = src.height, src.width
+        scale = max(height / max_dim, width / max_dim, 1.0)
+        out_height = int(height / scale)
+        out_width = int(width / scale)
+        
+        data = src.read(
+            1,
+            out_shape=(out_height, out_width),
+            resampling=Resampling.bilinear
+        )
+        
+        left, bottom, right, top = src.bounds
+        extent = [left, right, bottom, top]
+        
+        nodata = src.nodata
+        if nodata is not None:
+            data = np.ma.masked_equal(data, nodata)
+        
+        if minmax[0] is not None and minmax[1] is not None:
+            vmin, vmax = minmax
+        else:
+            data_for_stats = data.compressed() if np.ma.is_masked(data) else data
+            vmin, vmax = np.nanpercentile(data_for_stats, [2, 98])
+    
+    # State for the interactive viewer
+    state = {
+        'snap_radius': initial_snap_radius,
+        'point_spacing': 20.0,
+        'original_centerline': osm_centerline,
+        'current_centerline': osm_centerline,
+        'centerline_line': None,
+        'centerline_glow': None,
+        'start_marker': None,
+        'end_marker': None,
+    }
+    
+    # Create figure with space for controls
+    fig = plt.figure(figsize=(14, 10))
+    ax = plt.axes([0.08, 0.28, 0.84, 0.65])
+    
+    # Display raster
+    im = ax.imshow(
+        data, 
+        cmap='YlGnBu',
+        vmin=vmin, 
+        vmax=vmax,
+        extent=extent,
+        origin='upper',
+        zorder=1
+    )
+    plt.colorbar(im, ax=ax, label='Elevation', shrink=0.8)
+    
+    # Apply hillshade if provided
+    if hillshade_params is not None:
+        alpha, exaggeration, altitude = hillshade_params
+        hillshade = _compute_hillshade(data, altitude=altitude, z_factor=exaggeration)
+        ax.imshow(
+            hillshade,
+            cmap='gray',
+            alpha=alpha,
+            vmin=0,
+            vmax=255,
+            extent=extent,
+            origin='upper',
+            zorder=2
+        )
+    
+    # Initial centerline plot
+    def plot_centerline(line):
+        # Remove old plots
+        if state['centerline_glow']:
+            state['centerline_glow'].remove()
+        if state['centerline_line']:
+            state['centerline_line'].remove()
+        if state['start_marker']:
+            state['start_marker'].remove()
+        if state['end_marker']:
+            state['end_marker'].remove()
+        
+        if line is not None and not line.is_empty:
+            x, y = line.xy
+            state['centerline_glow'], = ax.plot(x, y, 'w-', linewidth=4, alpha=0.6, zorder=3)
+            state['centerline_line'], = ax.plot(x, y, color='#FF4500', linewidth=2.5, zorder=4)
+            state['start_marker'], = ax.plot(x[0], y[0], 'go', markersize=10, 
+                                              markeredgecolor='white', markeredgewidth=2, zorder=5)
+            state['end_marker'], = ax.plot(x[-1], y[-1], 'ro', markersize=10,
+                                            markeredgecolor='white', markeredgewidth=2, zorder=5)
+        
+        fig.canvas.draw_idle()
+    
+    # Plot initial centerline
+    plot_centerline(osm_centerline)
+    
+    title = ax.set_title(f'{raster_path.name}\nOSM Centerline - Adjust snapping parameters below')
+    ax.set_xlabel('Easting (m)')
+    ax.set_ylabel('Northing (m)')
+    
+    # Create control widgets - simplified interface
+    # Row 1: Sliders for snap radius and point spacing
+    ax_radius = plt.axes([0.18, 0.14, 0.30, 0.03])
+    ax_spacing = plt.axes([0.58, 0.14, 0.30, 0.03])
+    slider_radius = Slider(ax_radius, 'Snap Radius (m)', 10, 300, valinit=initial_snap_radius, valstep=10)
+    slider_spacing = Slider(ax_spacing, 'Point Spacing (m)', 5, 100, valinit=20, valstep=5)
+    state['point_spacing'] = 20.0  # Default to tighter spacing for better curve following
+    
+    # Row 2: Action buttons
+    ax_recompute = plt.axes([0.15, 0.06, 0.15, 0.05])
+    ax_show_hide = plt.axes([0.35, 0.06, 0.15, 0.05])
+    ax_reset = plt.axes([0.55, 0.06, 0.12, 0.05])
+    ax_done = plt.axes([0.72, 0.06, 0.12, 0.05])
+    
+    btn_recompute = Button(ax_recompute, 'Recompute')
+    btn_show_hide = Button(ax_show_hide, 'Hide Line')
+    btn_reset = Button(ax_reset, 'Reset')
+    btn_done = Button(ax_done, 'Done')
+    
+    state['line_visible'] = True
+    
+    # Status text
+    ax_status = plt.axes([0.15, 0.01, 0.70, 0.04])
+    ax_status.axis('off')
+    status_text = ax_status.text(0, 0.5, 'Ready. Adjust sliders and click "Recompute".',
+                                  fontsize=10, verticalalignment='center')
+    
+    def update_status(msg):
+        status_text.set_text(msg)
+        fig.canvas.draw_idle()
+    
+    def toggle_visibility(event):
+        state['line_visible'] = not state['line_visible']
+        btn_show_hide.label.set_text('Show Line' if not state['line_visible'] else 'Hide Line')
+        
+        # Toggle visibility of all centerline elements
+        if state['centerline_glow']:
+            state['centerline_glow'].set_visible(state['line_visible'])
+        if state['centerline_line']:
+            state['centerline_line'].set_visible(state['line_visible'])
+        if state['start_marker']:
+            state['start_marker'].set_visible(state['line_visible'])
+        if state['end_marker']:
+            state['end_marker'].set_visible(state['line_visible'])
+        
+        fig.canvas.draw_idle()
+    
+    def recompute(event):
+        state['snap_radius'] = slider_radius.val
+        state['point_spacing'] = slider_spacing.val
+        
+        update_status(f'Snapping to lowest elevation: spacing={state["point_spacing"]:.0f}m, radius={state["snap_radius"]:.0f}m...')
+        fig.canvas.draw_idle()
+        fig.canvas.flush_events()
+        
+        try:
+            snapped = _snap_centerline_to_channel(
+                state['original_centerline'],
+                raster_path,
+                search_radius=state['snap_radius'],
+                river_elev_range=None,  # Always snap to lowest elevation
+                point_spacing=state['point_spacing']
+            )
+            state['current_centerline'] = snapped
+            plot_centerline(snapped)
+            
+            # Ensure visibility matches state
+            if not state['line_visible']:
+                if state['centerline_glow']:
+                    state['centerline_glow'].set_visible(False)
+                if state['centerline_line']:
+                    state['centerline_line'].set_visible(False)
+                if state['start_marker']:
+                    state['start_marker'].set_visible(False)
+                if state['end_marker']:
+                    state['end_marker'].set_visible(False)
+            
+            update_status(f'✓ Done! {len(snapped.coords)} points | Spacing: {state["point_spacing"]:.0f}m | Radius: {state["snap_radius"]:.0f}m')
+        except Exception as e:
+            update_status(f'✗ Error: {str(e)}')
+    
+    def reset(event):
+        slider_radius.set_val(initial_snap_radius)
+        slider_spacing.set_val(20)
+        state['point_spacing'] = 20.0
+        state['line_visible'] = True
+        btn_show_hide.label.set_text('Hide Line')
+        state['current_centerline'] = state['original_centerline']
+        plot_centerline(state['original_centerline'])
+        update_status('Reset. Click "Recompute" to snap to channel.')
+    
+    def done(event):
+        plt.close(fig)
+    
+    btn_recompute.on_clicked(recompute)
+    btn_show_hide.on_clicked(toggle_visibility)
+    btn_reset.on_clicked(reset)
+    btn_done.on_clicked(done)
+    
+    # Instructions
+    print("\n" + "="*60)
+    print("CENTERLINE SNAPPING")
+    print("="*60)
+    print("1. Adjust 'Point Spacing' - lower = follows curves better (10-25m)")
+    print("2. Adjust 'Snap Radius' - search distance for channel (50-150m)")
+    print("3. Click 'Recompute' to snap centerline to lowest elevations")
+    print("4. Click 'Hide/Show Line' to see the terrain underneath")
+    print("5. Click 'Done' when satisfied")
+    print("="*60 + "\n")
+    
+    plt.show()
+    
+    return state['current_centerline']
+
+
+def derive_centerline_interactive(
+    raster_path: str | Path,
+    minmax: tuple[float | None, float | None] = (None, None),
+    hillshade_params: tuple[float, float, float] | None = None
+) -> LineString | None:
+    """
+    Derive centerline from OSM with interactive snapping adjustment.
+    
+    This is a convenience function that:
+    1. Queries OSM for the river centerline
+    2. Opens an interactive viewer to adjust snapping parameters
+    3. Returns the final adjusted centerline
+    
+    Parameters
+    ----------
+    raster_path : str or Path
+        Path to the raster file
+    minmax : tuple[float | None, float | None], optional
+        Min and max values for color range and initial elevation range.
+    hillshade_params : tuple[float, float, float], optional
+        (alpha, exaggeration, altitude) for hillshade overlay.
+        
+    Returns
+    -------
+    LineString or None
+        The adjusted centerline, or None if no waterways found.
+    """
+    raster_path = Path(raster_path)
+    
+    # Get raster bounds and CRS
+    with rasterio.open(raster_path) as src:
+        raster_crs = src.crs
+        raster_bounds = src.bounds
+        
+    print(f"Raster CRS: {raster_crs}")
+    print(f"Raster bounds: {raster_bounds}")
+    
+    # Transform bounds to WGS84 for Overpass API query
+    bounds_wgs84 = transform_bounds(raster_crs, "EPSG:4326", *raster_bounds)
+    print(f"Bounds in WGS84: {bounds_wgs84}")
+    
+    # Query OSM for waterways
+    elements = _query_osm_waterways(bounds_wgs84)
+    
+    if not elements:
+        print("No waterway elements found in the bounding box.")
+        return None
+    
+    print(f"Retrieved {len(elements)} OSM elements")
+    
+    # Build LineStrings from OSM data
+    linestrings = _build_linestrings_from_osm(elements)
+    
+    if not linestrings:
+        print("No valid waterway geometries found.")
+        return None
+    
+    print(f"Built {len(linestrings)} waterway LineStrings")
+    
+    # Merge all linestrings
+    merged = linemerge(linestrings)
+    
+    if isinstance(merged, MultiLineString):
+        longest = max(merged.geoms, key=lambda g: g.length)
+        centerline_wgs84 = longest
+        print(f"Merged result is MultiLineString with {len(merged.geoms)} parts, using longest segment")
+    else:
+        centerline_wgs84 = merged
+    
+    # Transform to raster CRS
+    transformer = Transformer.from_crs("EPSG:4326", raster_crs, always_xy=True)
+    
+    def transform_coords(x, y):
+        return transformer.transform(x, y)
+    
+    osm_centerline = shapely_transform(transform_coords, centerline_wgs84)
+    
+    print(f"OSM Centerline has {len(osm_centerline.coords)} points")
+    
+    # Open interactive snapping interface
+    return interactive_osm_centerline(
+        raster_path,
+        osm_centerline,
+        minmax=minmax,
+        hillshade_params=hillshade_params
+    )
+
+
 __all__ = [
     "interactive_raster_viewer",
     "minmax_widget",
@@ -1416,6 +1937,8 @@ __all__ = [
     "interactive_hillshade",
     "interactive_centerline",
     "derive_centerline",
+    "derive_centerline_interactive",
+    "interactive_osm_centerline",
     "display_centerline_overlay",
     "display_raster",
     "ViewerState"

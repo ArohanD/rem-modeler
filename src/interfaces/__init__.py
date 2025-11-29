@@ -7,6 +7,8 @@ from .interfaces import (
     interactive_hillshade,
     interactive_centerline,
     derive_centerline,
+    derive_centerline_interactive,
+    interactive_osm_centerline,
     display_centerline_overlay,
     display_raster,
     ViewerState
@@ -21,6 +23,8 @@ __all__ = [
     "interactive_hillshade",
     "interactive_centerline",
     "derive_centerline",
+    "derive_centerline_interactive",
+    "interactive_osm_centerline",
     "display_centerline_overlay",
     "display_raster",
     "ViewerState"

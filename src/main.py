@@ -5,7 +5,7 @@ from pathlib import Path
 from osgeo import gdal
 
 from .utils import merge_tifs, print_raster_stats
-from .interfaces import interactive_min_max, interactive_hillshade, interactive_centerline, derive_centerline
+from .interfaces import interactive_min_max, interactive_hillshade, interactive_centerline, derive_centerline, derive_centerline_interactive
 
 
 def main() -> None:
@@ -61,8 +61,8 @@ def main() -> None:
     #     manual=True  # Use manual digitization
     # )
 
-    # Derive centerline from OpenStreetMap with hillshade overlay
-    centerline = derive_centerline(
+    # Derive centerline from OpenStreetMap with INTERACTIVE snapping adjustment
+    centerline = derive_centerline_interactive(
         merged,
         minmax=(1300, 1320),
         hillshade_params=(0.5, 5, 45)  # alpha, exaggeration, altitude
