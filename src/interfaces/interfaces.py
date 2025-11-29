@@ -5,16 +5,21 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable, Any
 from dataclasses import dataclass
+import json
+import urllib.request
+import urllib.parse
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import TextBox, Button, Slider
 import rasterio
 from rasterio.enums import Resampling
+from rasterio.warp import transform_bounds
 from affine import Affine
 from scipy import ndimage
 from skimage.morphology import skeletonize
-from shapely.geometry import LineString, MultiLineString
-from shapely.ops import linemerge
+from shapely.geometry import LineString, MultiLineString, Point
+from shapely.ops import linemerge, transform as shapely_transform
+from pyproj import Transformer
 
 
 @dataclass
@@ -1025,6 +1030,299 @@ def interactive_hillshade(
         state.user_inputs['hillshade_altitude']
     )
 
+def _query_osm_waterways(bbox_wgs84: tuple[float, float, float, float]) -> list[dict]:
+    """
+    Query OpenStreetMap Overpass API for waterways within a bounding box.
+    
+    Parameters
+    ----------
+    bbox_wgs84 : tuple
+        Bounding box in WGS84 (min_lon, min_lat, max_lon, max_lat)
+        
+    Returns
+    -------
+    list[dict]
+        List of OSM way elements with their nodes and coordinates
+    """
+    min_lon, min_lat, max_lon, max_lat = bbox_wgs84
+    # Overpass uses (south, west, north, east) format
+    bbox_str = f"{min_lat},{min_lon},{max_lat},{max_lon}"
+    
+    # Query for waterways (rivers, streams, canals)
+    query = f"""
+    [out:json][timeout:60];
+    (
+      way["waterway"="river"]({bbox_str});
+      way["waterway"="stream"]({bbox_str});
+      way["waterway"="canal"]({bbox_str});
+    );
+    out body;
+    >;
+    out skel qt;
+    """
+    
+    url = "https://overpass-api.de/api/interpreter"
+    data = urllib.parse.urlencode({"data": query}).encode("utf-8")
+    
+    print(f"Querying OSM Overpass API for waterways in bbox: {bbox_wgs84}")
+    
+    try:
+        req = urllib.request.Request(url, data=data, method="POST")
+        req.add_header("User-Agent", "GIS584-RiverCenterline/1.0")
+        with urllib.request.urlopen(req, timeout=120) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except Exception as e:
+        print(f"Error querying Overpass API: {e}")
+        return []
+    
+    return result.get("elements", [])
+
+
+def _build_linestrings_from_osm(elements: list[dict]) -> list[LineString]:
+    """
+    Build Shapely LineStrings from OSM Overpass API elements.
+    
+    Parameters
+    ----------
+    elements : list[dict]
+        OSM elements from Overpass API response
+        
+    Returns
+    -------
+    list[LineString]
+        List of Shapely LineStrings representing waterways
+    """
+    # Separate nodes and ways
+    nodes = {}
+    ways = []
+    
+    for elem in elements:
+        if elem["type"] == "node":
+            nodes[elem["id"]] = (elem["lon"], elem["lat"])
+        elif elem["type"] == "way":
+            ways.append(elem)
+    
+    linestrings = []
+    for way in ways:
+        coords = []
+        for node_id in way.get("nodes", []):
+            if node_id in nodes:
+                coords.append(nodes[node_id])
+        
+        if len(coords) >= 2:
+            linestrings.append(LineString(coords))
+    
+    return linestrings
+
+
+def derive_centerline(
+    raster_path: str | Path, 
+    minmax: tuple[float | None, float | None] = (None, None),
+    hillshade_params: tuple[float, float, float] | None = None,
+    show_overlay: bool = True
+) -> LineString | None:
+    """
+    Derive the river centerline by querying OpenStreetMap Overpass API.
+    
+    This function extracts the bounding box from the raster, queries OSM for
+    waterways within that area, and returns a merged centerline geometry.
+    Optionally displays an interactive overlay of the centerline on the raster.
+    
+    Parameters
+    ----------
+    raster_path : str or Path
+        Path to the raster file
+    minmax : tuple[float | None, float | None], optional
+        Min and max values for color range. If (None, None), auto-calculated from data.
+    hillshade_params : tuple[float, float, float], optional
+        (alpha, exaggeration, altitude) for hillshade overlay. If None, no hillshade applied.
+    show_overlay : bool, optional
+        If True, display an interactive plot with the centerline overlaid on the raster.
+        
+    Returns
+    -------
+    LineString or None
+        Shapely LineString representing the river centerline in the raster's CRS,
+        or None if no waterways found.
+    """
+    raster_path = Path(raster_path)
+    
+    # Get raster bounds and CRS
+    with rasterio.open(raster_path) as src:
+        raster_crs = src.crs
+        raster_bounds = src.bounds  # (left, bottom, right, top) = (minx, miny, maxx, maxy)
+        
+    print(f"Raster CRS: {raster_crs}")
+    print(f"Raster bounds: {raster_bounds}")
+    
+    # Transform bounds to WGS84 for Overpass API query
+    bounds_wgs84 = transform_bounds(raster_crs, "EPSG:4326", *raster_bounds)
+    print(f"Bounds in WGS84: {bounds_wgs84}")
+    
+    # Query OSM for waterways
+    elements = _query_osm_waterways(bounds_wgs84)
+    
+    if not elements:
+        print("No waterway elements found in the bounding box.")
+        return None
+    
+    print(f"Retrieved {len(elements)} OSM elements")
+    
+    # Build LineStrings from OSM data
+    linestrings = _build_linestrings_from_osm(elements)
+    
+    if not linestrings:
+        print("No valid waterway geometries found.")
+        return None
+    
+    print(f"Built {len(linestrings)} waterway LineStrings")
+    
+    # Merge all linestrings into a single geometry
+    merged = linemerge(linestrings)
+    
+    # If result is MultiLineString, take the longest segment or keep as-is
+    if isinstance(merged, MultiLineString):
+        # Find the longest linestring
+        longest = max(merged.geoms, key=lambda g: g.length)
+        centerline_wgs84 = longest
+        print(f"Merged result is MultiLineString with {len(merged.geoms)} parts, using longest segment")
+    else:
+        centerline_wgs84 = merged
+    
+    # Transform centerline from WGS84 back to raster CRS
+    transformer = Transformer.from_crs("EPSG:4326", raster_crs, always_xy=True)
+    
+    def transform_coords(x, y):
+        return transformer.transform(x, y)
+    
+    centerline_raster_crs = shapely_transform(transform_coords, centerline_wgs84)
+    
+    print(f"Centerline has {len(centerline_raster_crs.coords)} points")
+    
+    # Display overlay if requested
+    if show_overlay:
+        display_centerline_overlay(raster_path, centerline_raster_crs, minmax, hillshade_params=hillshade_params)
+    
+    return centerline_raster_crs
+
+
+def display_centerline_overlay(
+    raster_path: str | Path,
+    centerline: LineString,
+    minmax: tuple[float | None, float | None] = (None, None),
+    band: int = 1,
+    hillshade_params: tuple[float, float, float] | None = None
+) -> None:
+    """
+    Display the raster with the river centerline overlaid, optionally with hillshade.
+    
+    Parameters
+    ----------
+    raster_path : str or Path
+        Path to the raster file
+    centerline : LineString
+        Shapely LineString in the same CRS as the raster
+    minmax : tuple[float | None, float | None], optional
+        Min and max values for color range. If (None, None), auto-calculated.
+    band : int, optional
+        Band number to display (1-indexed), default is 1
+    hillshade_params : tuple[float, float, float], optional
+        (alpha, exaggeration, altitude) for hillshade overlay. If None, no hillshade.
+    """
+    raster_path = Path(raster_path)
+    
+    with rasterio.open(raster_path) as src:
+        # Read data with optional downsampling for display
+        max_dim = 2000
+        height, width = src.height, src.width
+        scale = max(height / max_dim, width / max_dim, 1.0)
+        out_height = int(height / scale)
+        out_width = int(width / scale)
+        
+        data = src.read(
+            band,
+            out_shape=(out_height, out_width),
+            resampling=Resampling.bilinear
+        )
+        
+        # Get extent for proper coordinate display
+        transform = src.transform
+        left, bottom, right, top = src.bounds
+        extent = [left, right, bottom, top]
+        
+        # Mask nodata
+        nodata = src.nodata
+        if nodata is not None:
+            data = np.ma.masked_equal(data, nodata)
+        
+        # Calculate color range
+        if minmax[0] is not None and minmax[1] is not None:
+            vmin, vmax = minmax
+        else:
+            data_for_stats = data.compressed() if np.ma.is_masked(data) else data
+            vmin, vmax = np.nanpercentile(data_for_stats, [2, 98])
+    
+    # Create the figure
+    fig, ax = plt.subplots(figsize=(12, 10))
+    
+    # Display raster (base layer)
+    im = ax.imshow(
+        data, 
+        cmap='YlGnBu',  # Use same colormap as other viewers
+        vmin=vmin, 
+        vmax=vmax,
+        extent=extent,
+        origin='upper',
+        zorder=1
+    )
+    plt.colorbar(im, ax=ax, label='Elevation', shrink=0.8)
+    
+    # Apply hillshade overlay if parameters provided
+    if hillshade_params is not None:
+        alpha, exaggeration, altitude = hillshade_params
+        print(f"Applying hillshade: alpha={alpha}, exaggeration={exaggeration}, altitude={altitude}°")
+        
+        hillshade = _compute_hillshade(
+            data,
+            altitude=altitude,
+            z_factor=exaggeration
+        )
+        
+        ax.imshow(
+            hillshade,
+            cmap='gray',
+            alpha=alpha,
+            vmin=0,
+            vmax=255,
+            extent=extent,
+            origin='upper',
+            zorder=2
+        )
+    
+    # Overlay the centerline (on top of everything)
+    if centerline is not None and not centerline.is_empty:
+        x, y = centerline.xy
+        # Draw with a glow effect for visibility
+        ax.plot(x, y, 'w-', linewidth=4, alpha=0.6, zorder=3)  # White outline
+        ax.plot(x, y, color='#FF4500', linewidth=2.5, label='River Centerline (OSM)', alpha=0.95, zorder=4)
+        
+        # Mark start and end points
+        ax.plot(x[0], y[0], 'go', markersize=12, markeredgecolor='white', 
+                markeredgewidth=2, label='Start', zorder=5)
+        ax.plot(x[-1], y[-1], 'ro', markersize=12, markeredgecolor='white', 
+                markeredgewidth=2, label='End', zorder=5)
+    
+    ax.set_xlabel('Easting (m)')
+    ax.set_ylabel('Northing (m)')
+    
+    title = f'{raster_path.name}\nRiver Centerline from OpenStreetMap'
+    if hillshade_params:
+        title += f'\n(Hillshade: α={alpha:.1f}, z={exaggeration:.1f}x, alt={altitude:.0f}°)'
+    ax.set_title(title)
+    ax.legend(loc='upper right')
+    
+    plt.tight_layout()
+    plt.show()
 
 def interactive_centerline(
     raster_path: str | Path,
@@ -1117,6 +1415,8 @@ __all__ = [
     "interactive_min_max",
     "interactive_hillshade",
     "interactive_centerline",
+    "derive_centerline",
+    "display_centerline_overlay",
     "display_raster",
     "ViewerState"
 ]

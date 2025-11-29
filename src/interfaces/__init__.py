@@ -6,6 +6,8 @@ from .interfaces import (
     interactive_min_max,
     interactive_hillshade,
     interactive_centerline,
+    derive_centerline,
+    display_centerline_overlay,
     display_raster,
     ViewerState
 )
@@ -18,6 +20,8 @@ __all__ = [
     "interactive_min_max",
     "interactive_hillshade",
     "interactive_centerline",
+    "derive_centerline",
+    "display_centerline_overlay",
     "display_raster",
     "ViewerState"
 ]

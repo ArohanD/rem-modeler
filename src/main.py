@@ -5,7 +5,7 @@ from pathlib import Path
 from osgeo import gdal
 
 from .utils import merge_tifs, print_raster_stats
-from .interfaces import interactive_min_max, interactive_hillshade, interactive_centerline
+from .interfaces import interactive_min_max, interactive_hillshade, interactive_centerline, derive_centerline
 
 
 def main() -> None:
@@ -27,7 +27,7 @@ def main() -> None:
 
     # Print Merged Raster Stats
     # Want to know the distribution of values in the merged raster
-    print_raster_stats(merged)
+    # print_raster_stats(merged)  # Commented out due to Windows encoding issue with Unicode chars
 
     # Open an interactive panel of the raster where the user can get the value of
     # a pixel under the cursor for a specified band
@@ -53,12 +53,19 @@ def main() -> None:
     #     hillshade_params=(alpha, exaggeration, altitude)
     # )
 
-    centerline = interactive_centerline(
+    # centerline = interactive_centerline(
+    #     merged,
+    #     band,
+    #     minmax=(1300, 1320),
+    #     hillshade_params=(0.5, 5, 45),
+    #     manual=True  # Use manual digitization
+    # )
+
+    # Derive centerline from OpenStreetMap with hillshade overlay
+    centerline = derive_centerline(
         merged,
-        band,
         minmax=(1300, 1320),
-        hillshade_params=(0.5, 5, 45),
-        manual=True  # Use manual digitization
+        hillshade_params=(0.5, 5, 45)  # alpha, exaggeration, altitude
     )
     
     if centerline:
