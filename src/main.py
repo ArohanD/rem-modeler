@@ -5,7 +5,7 @@ from pathlib import Path
 from osgeo import gdal
 
 from .utils import merge_tifs, print_raster_stats
-from .interfaces import interactive_min_max, interactive_hillshade
+from .interfaces import interactive_min_max, interactive_hillshade, interactive_osm_centerline, derive_centerline, derive_centerline_interactive
 
 
 def main() -> None:
@@ -27,23 +27,36 @@ def main() -> None:
 
     # Print Merged Raster Stats
     # Want to know the distribution of values in the merged raster
-    print_raster_stats(merged)
+    # print_raster_stats(merged)  # Commented out due to Windows encoding issue with Unicode chars
 
     # Open an interactive panel of the raster where the user can get the value of
     # a pixel under the cursor for a specified band
     band = 1
-    river_min_elevation, river_max_elevation = interactive_min_max(merged, band)
+    # river_min_elevation, river_max_elevation = interactive_min_max(merged, band)
     
-    print(f"Selected elevation range: {river_min_elevation:.2f} to {river_max_elevation:.2f}")
+    # print(f"Selected elevation range: {river_min_elevation:.2f} to {river_max_elevation:.2f}")
 
     # Allow the user to customize a hillshade on top of the current raster
-    alpha, exaggeration, altitude = interactive_hillshade(
-        merged, 
-        band, 
-        minmax=(river_min_elevation, river_max_elevation)
+    # alpha, exaggeration, altitude = interactive_hillshade(
+    #     merged, 
+    #     band, 
+    #     minmax=(river_min_elevation, river_max_elevation)
+    # )
+    
+    # print(f"Hillshade settings: alpha={alpha:.2f}, exaggeration={exaggeration:.2f}, altitude={altitude:.1f}°")
+
+    # Derive centerline from OpenStreetMap with INTERACTIVE snapping adjustment
+    centerline = derive_centerline_interactive(
+        merged,
+        minmax=(1300, 1320),
+        hillshade_params=(0.5, 5, 45)  # alpha, exaggeration, altitude
     )
     
-    print(f"Hillshade settings: alpha={alpha:.2f}, exaggeration={exaggeration:.2f}, altitude={altitude:.1f}°")
+    if centerline:
+        print(f"Centerline extracted: {len(centerline.coords)} coordinate points")
+        print(f"Centerline length: {centerline.length:.2f} map units")
+    else:
+        print("No centerline extracted")
 
 
     
