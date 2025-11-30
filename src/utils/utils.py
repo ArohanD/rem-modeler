@@ -5,8 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from osgeo import gdal
 from rasterio import rasterio
+from scipy.interpolate import RBFInterpolator
+from scipy.ndimage import zoom
 from shapely.geometry import LineString, Point
 import numpy as np
+from tqdm import tqdm
 
 
 def merge_tifs(directory: str | Path, output_path: str | Path | None = None) -> Path:
@@ -210,20 +213,93 @@ def sample_elevations_along_line(
     
     return samples
 
-def idw_interpolate(points: LineString, raster_path: str | Path, band: int) -> np.ndarray:
+def interpolate(points: list[tuple[float, float, float]], raster_path: str | Path, band: int) -> np.ndarray:
     """
-    Interpolate the values of a raster at the points using IDW.
+    Interpolate sparse river elevation samples to create a smooth water surface raster.
+
+    Uses Radial Basis Function (thin plate spline) interpolation to create a 
+    smooth, continuous surface from discrete sample points along the river.
+    This surface represents the water elevation and can be subtracted from
+    the DEM to create a Relative Elevation Model (REM).
+
     Parameters
     ----------
-    points: LineString
-        The points to interpolate the values at
-    raster_path: str | Path
-        The path to the raster file
-    band: int
-        The band to interpolate the values from
+    points : list[tuple[float, float, float]]
+        List of (x, y, elevation) sample points from the river centerline
+    raster_path : str | Path
+        Path to the DEM raster (used for extent and resolution)
+    band : int, optional
+        Band number (default: 1)
+        
+    Returns
+    -------
+    np.ndarray
+        2D array of interpolated water surface elevations, same shape as input DEM
     """
 
+    # convert the points to a numpy arrays
+    points_xy = np.array([[x, y] for x, y, _ in points])
+    values = np.array([z for _, _, z in points])
+
+    print(f"Interpolating {len(points_xy)} points")
+
+    # get raster properties
+    with rasterio.open(raster_path) as src:
+        height, width = src.height, src.width
+        left, bottom, right, top = src.bounds
+
+    # create a coarse grid to speed things up
+    scale_factor = 10
+    coarse_height = height // scale_factor
+    coarse_width = width // scale_factor
+
+    # create 1D arrays for the x and y coordinates
+    x_coords = np.linspace(left, right, coarse_width)
+    y_coords = np.linspace(top, bottom, coarse_height)
+
+    # create a 2D grid of the x and y coordinates
+    xx, yy = np.meshgrid(x_coords, y_coords)
+
+    # flatten to list of coordinate pairs
+    grid_points = np.column_stack((xx.ravel(), yy.ravel()))
+
+    print(f"Interpolating to {coarse_width} x {coarse_height} grid")
+
+    # interpolate the values at the grid points
+    interpolator = RBFInterpolator(points_xy, values, kernel='thin_plate_spline', smoothing=1.0)
+
+    # Interpolate the values at the grid points
+    interpolated_flat = interpolate_with_progress(interpolator, grid_points)
+
+    # reshape the interpolated values back to the original shape
+    water_surface_coarse = interpolated_flat.reshape(coarse_height, coarse_width)
+
+    print(f"Resampling back to original size")
+
+    # calculate exact zoom factors
+    zoom_x = width / coarse_width
+    zoom_y = height / coarse_height
+
+    water_surface = zoom(water_surface_coarse, (zoom_y, zoom_x), order=1)
+
+    # handle rounding errors
+    if water_surface.shape != (height, width):
+        water_surface = water_surface[:height, :width]
+
+    print("Interpolation complete")
+
+    return water_surface
+
+def interpolate_with_progress(interpolator, grid_points, chunk_size=100000):
+    total_points = len(grid_points)
+    result = np.zeros(total_points)
     
+    # tqdm creates automatic progress bar
+    for i in tqdm(range(0, total_points, chunk_size), desc="Interpolating"):
+        end_idx = min(i + chunk_size, total_points)
+        result[i:end_idx] = interpolator(grid_points[i:end_idx])
+    
+    return result
 
 
 
