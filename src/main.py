@@ -37,24 +37,26 @@ def main() -> None:
     # Open an interactive panel of the raster where the user can get the value of
     # a pixel under the cursor for a specified band
     band = 1
-    # river_min_elevation, river_max_elevation = interactive_min_max(merged, band)
+    river_min_elevation, river_max_elevation = interactive_min_max(merged, band)
     
-    # print(f"Selected elevation range: {river_min_elevation:.2f} to {river_max_elevation:.2f}")
+    print(f"Selected elevation range: {river_min_elevation:.2f} to {river_max_elevation:.2f}")
 
     # Allow the user to customize a hillshade on top of the current raster
-    # alpha, exaggeration, altitude = interactive_hillshade(
-    #     merged, 
-    #     band, 
-    #     minmax=(river_min_elevation, river_max_elevation)
-    # )
+    alpha, exaggeration, altitude = interactive_hillshade(
+        merged, 
+        band, 
+        minmax=(river_min_elevation, river_max_elevation)
+    )
     
-    # print(f"Hillshade settings: alpha={alpha:.2f}, exaggeration={exaggeration:.2f}, altitude={altitude:.1f}°")
+    print(f"Hillshade settings: alpha={alpha:.2f}, exaggeration={exaggeration:.2f}, altitude={altitude:.1f}°")
 
     # Derive centerline from OpenStreetMap with INTERACTIVE snapping adjustment
     centerline, snap_radius, point_spacing = derive_centerline_interactive(
         merged,
-        minmax=(1300, 1320),
-        hillshade_params=(0.5, 5, 45)  # alpha, exaggeration, altitude
+        minmax=(river_min_elevation, river_max_elevation), 
+        hillshade_params=(alpha, exaggeration, altitude)   # alpha, exaggeration, altitude
+        # minmax=(1300, 1320),
+        # hillshade_params=(0.5, 5, 45)  
     )
 
     # Create a point shapefile from the centerline, with the point spacing as the distance between points
