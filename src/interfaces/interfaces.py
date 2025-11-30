@@ -1754,7 +1754,7 @@ def interactive_osm_centerline(
     
     plt.show()
     
-    return state['current_centerline']
+    return state['current_centerline'], state['snap_radius'], state['point_spacing']
 
 
 def derive_centerline_interactive(

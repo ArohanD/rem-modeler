@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from osgeo import gdal
+from shapely.geometry import LineString, Point
 
 
 def merge_tifs(directory: str | Path, output_path: str | Path | None = None) -> Path:
@@ -138,4 +139,45 @@ def print_raster_stats(raster_path: str | Path) -> None:
     ds = None  # Close dataset
     print(f"\n{'='*60}\n")
 
-__all__ = ["merge_tifs", "print_raster_stats"]
+def create_points_from_centerline(centerline: LineString, point_spacing: float) -> LineString:
+    """
+    Create evenly spaced points along a centerline and return as a new LineString.
+    
+    Parameters
+    ----------
+    centerline : LineString
+        The input centerline geometry
+    point_spacing : float
+        Distance between consecutive points (in map units)
+        
+    Returns
+    -------
+    LineString
+        A new LineString with points sampled at regular intervals
+    """
+    total_length = centerline.length
+    
+    # Generate distances along the line
+    distances = []
+    distance = 0.0
+    while distance <= total_length:
+        distances.append(distance)
+        distance += point_spacing
+    
+    # Always include the endpoint
+    if distances[-1] < total_length:
+        distances.append(total_length)
+    
+    # Interpolate points at each distance
+    coords = []
+    for d in distances:
+        point = centerline.interpolate(d)
+        coords.append((point.x, point.y))
+    
+    return LineString(coords)
+
+
+# def idw_interpolate(points: LineString, raster_path: str | Path, band: int) -> 
+
+
+__all__ = ["merge_tifs", "print_raster_stats", "create_points_from_centerline"]

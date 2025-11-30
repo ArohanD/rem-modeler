@@ -4,6 +4,8 @@ from pathlib import Path
 
 from osgeo import gdal
 
+from src.utils.utils import create_points_from_centerline
+
 from .utils import merge_tifs, print_raster_stats
 from .interfaces import interactive_min_max, interactive_hillshade, interactive_osm_centerline, derive_centerline, derive_centerline_interactive
 
@@ -46,17 +48,16 @@ def main() -> None:
     # print(f"Hillshade settings: alpha={alpha:.2f}, exaggeration={exaggeration:.2f}, altitude={altitude:.1f}°")
 
     # Derive centerline from OpenStreetMap with INTERACTIVE snapping adjustment
-    centerline = derive_centerline_interactive(
+    centerline, snap_radius, point_spacing = derive_centerline_interactive(
         merged,
         minmax=(1300, 1320),
         hillshade_params=(0.5, 5, 45)  # alpha, exaggeration, altitude
     )
-    
-    if centerline:
-        print(f"Centerline extracted: {len(centerline.coords)} coordinate points")
-        print(f"Centerline length: {centerline.length:.2f} map units")
-    else:
-        print("No centerline extracted")
+
+    # Create a point shapefile from the centerline, with the point spacing as the distance between points
+    points = create_points_from_centerline(centerline, point_spacing)
+
+    idw_interpolated = idw_interpolate(points, merged, band)
 
 
     
