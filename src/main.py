@@ -4,7 +4,7 @@ from pathlib import Path
 
 from osgeo import gdal
 
-from src.utils.utils import create_points_from_centerline
+from src.utils.utils import create_points_from_centerline, idw_interpolate, sample_elevations_along_line
 
 from .utils import merge_tifs, print_raster_stats
 from .interfaces import interactive_min_max, interactive_hillshade, interactive_osm_centerline, derive_centerline, derive_centerline_interactive
@@ -55,9 +55,15 @@ def main() -> None:
     )
 
     # Create a point shapefile from the centerline, with the point spacing as the distance between points
-    points = create_points_from_centerline(centerline, point_spacing)
+    densified_centerline_points = create_points_from_centerline(centerline, point_spacing)
 
-    idw_interpolated = idw_interpolate(points, merged, band)
+    # sample the elevations along the centerline
+    elevations_along_centerline = sample_elevations_along_line(densified_centerline_points, merged, band)
+
+    # interpolate the elevations along the centerline using IDW
+    idw_interpolated_elevations = idw_interpolate(densified_centerline_points, merged, band)
+
+    import pdb; pdb.set_trace()
 
 
     

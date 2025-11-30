@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 from osgeo import gdal
+from rasterio import rasterio
 from shapely.geometry import LineString, Point
+import numpy as np
 
 
 def merge_tifs(directory: str | Path, output_path: str | Path | None = None) -> Path:
@@ -177,7 +179,53 @@ def create_points_from_centerline(centerline: LineString, point_spacing: float) 
     return LineString(coords)
 
 
-# def idw_interpolate(points: LineString, raster_path: str | Path, band: int) -> 
+def sample_elevations_along_line(
+    centerline: LineString, 
+    raster_path: str | Path, 
+    band: int = 1
+) -> list[tuple[float, float, float]]:
+    """
+    Sample elevation values from a raster at each point along a centerline.
+    
+    Returns list of (x, y, elevation) tuples for valid sample points.
+    """
+    with rasterio.open(raster_path) as src:
+        data = src.read(band)
+        transform = src.transform
+        nodata = src.nodata
+
+    samples = []
+    for x, y in centerline.coords:
+        # Convert geographic coords to pixel coords
+        col, row = ~transform * (x, y)
+        col, row = int(col), int(row)
+        
+        # Check if pixel is within raster bounds
+        if 0 <= row < data.shape[0] and 0 <= col < data.shape[1]:
+            value = data[row, col]
+            
+            # Skip nodata values
+            if nodata is None or value != nodata:
+                samples.append((x, y, float(value)))
+    
+    return samples
+
+def idw_interpolate(points: LineString, raster_path: str | Path, band: int) -> np.ndarray:
+    """
+    Interpolate the values of a raster at the points using IDW.
+    Parameters
+    ----------
+    points: LineString
+        The points to interpolate the values at
+    raster_path: str | Path
+        The path to the raster file
+    band: int
+        The band to interpolate the values from
+    """
+
+    
+
+
 
 
 __all__ = ["merge_tifs", "print_raster_stats", "create_points_from_centerline"]
