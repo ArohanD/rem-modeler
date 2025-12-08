@@ -1,6 +1,7 @@
 """Entry point for the GIS 584 project package."""
 
 from pathlib import Path
+import sys
 
 from osgeo import gdal
 import numpy as np
@@ -28,7 +29,7 @@ def main() -> None:
     # merged = merge_tifs(tutorial_dir, output_path)
     # print(f"Merged raster written to {merged}")
 
-    merged = Path("outputs/tutorial_merged.tif")
+    merged = Path("outputs/tutorial_merged.tif") if not sys.argv[1] else Path(sys.argv[1])
 
     # Print Merged Raster Stats
     # Want to know the distribution of values in the merged raster
@@ -65,7 +66,7 @@ def main() -> None:
     # sample the elevations along the centerline
     elevations_along_centerline = sample_elevations_along_line(densified_centerline_points, merged, band)
 
-    # interpolate the elevations along the centerline using IDW
+    # interpolate the elevations along the centerline using RBF interpolation
     water_surface = interpolate(elevations_along_centerline, merged, band)
 
     # Create REM (Relative Elevation Model)
@@ -118,7 +119,8 @@ def main() -> None:
     plt.show()
     
     # Save the REM to file
-    output_path = Path("outputs/rem_script.tif")
+    filename = sys.argv[2] if sys.argv[2] else "rem_script.tif"
+    output_path = Path("outputs", filename)
     output_path.parent.mkdir(exist_ok=True)
     
     profile.update(dtype=rasterio.float32, compress='lzw')

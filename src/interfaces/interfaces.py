@@ -11,6 +11,7 @@ import urllib.parse
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import TextBox, Button, Slider
+from matplotlib.patches import Polygon as MplPolygon
 import rasterio
 from rasterio.enums import Resampling
 from rasterio.warp import transform_bounds
@@ -1579,6 +1580,8 @@ def interactive_osm_centerline(
         'centerline_glow': None,
         'start_marker': None,
         'end_marker': None,
+        'radius_patches': [],
+        'line_visible': True,
     }
     
     # Create figure with space for controls
@@ -1634,9 +1637,39 @@ def interactive_osm_centerline(
                                             markeredgecolor='white', markeredgewidth=2, zorder=5)
         
         fig.canvas.draw_idle()
+
+    def clear_radius_overlay():
+        for patch in state['radius_patches']:
+            patch.remove()
+        state['radius_patches'].clear()
+
+    def update_radius_overlay(radius):
+        clear_radius_overlay()
+        line = state['current_centerline']
+        if line is None or line.is_empty or radius <= 0:
+            fig.canvas.draw_idle()
+            return
+        buffer_geom = line.buffer(radius, resolution=24)
+        polygons = [buffer_geom] if buffer_geom.geom_type == 'Polygon' else list(buffer_geom.geoms)
+        for poly in polygons:
+            coords = np.asarray(poly.exterior.coords)
+            patch = MplPolygon(
+                coords,
+                facecolor='#ff00ff',
+                edgecolor='#8b008b',
+                alpha=0.35,
+                linewidth=1.8,
+                linestyle='--',
+                zorder=2.4
+            )
+            patch.set_visible(state['line_visible'])
+            ax.add_patch(patch)
+            state['radius_patches'].append(patch)
+        fig.canvas.draw_idle()
     
     # Plot initial centerline
     plot_centerline(osm_centerline)
+    update_radius_overlay(state['snap_radius'])
     
     title = ax.set_title(f'{raster_path.name}\nOSM Centerline - Adjust snapping parameters below')
     ax.set_xlabel('Easting (m)')
@@ -1649,6 +1682,7 @@ def interactive_osm_centerline(
     slider_spacing = Slider(ax_spacing, 'Point Spacing (m)', 5, 100, valinit=20, valstep=5)
     slider_radius = Slider(ax_radius, 'Snap Radius (m)', 10, 300, valinit=initial_snap_radius, valstep=10)
     state['point_spacing'] = 20.0  # Default to tighter spacing for better curve following
+    slider_radius.on_changed(lambda val: update_radius_overlay(val))
     
     # Action buttons row
     ax_recompute = plt.axes([0.15, 0.05, 0.15, 0.045])
@@ -1660,8 +1694,6 @@ def interactive_osm_centerline(
     btn_show_hide = Button(ax_show_hide, 'Hide Line')
     btn_reset = Button(ax_reset, 'Reset')
     btn_done = Button(ax_done, 'Done')
-    
-    state['line_visible'] = True
     
     # Status text
     ax_status = plt.axes([0.15, 0.01, 0.70, 0.04])
@@ -1686,6 +1718,8 @@ def interactive_osm_centerline(
             state['start_marker'].set_visible(state['line_visible'])
         if state['end_marker']:
             state['end_marker'].set_visible(state['line_visible'])
+        for patch in state['radius_patches']:
+            patch.set_visible(state['line_visible'])
         
         fig.canvas.draw_idle()
     
@@ -1707,6 +1741,7 @@ def interactive_osm_centerline(
             )
             state['current_centerline'] = snapped
             plot_centerline(snapped)
+            update_radius_overlay(slider_radius.val)
             
             # Ensure visibility matches state
             if not state['line_visible']:
@@ -1718,6 +1753,8 @@ def interactive_osm_centerline(
                     state['start_marker'].set_visible(False)
                 if state['end_marker']:
                     state['end_marker'].set_visible(False)
+                for patch in state['radius_patches']:
+                    patch.set_visible(False)
             
             update_status(f'✓ Done! {len(snapped.coords)} points | Spacing: {state["point_spacing"]:.0f}m | Radius: {state["snap_radius"]:.0f}m')
         except Exception as e:
@@ -1731,6 +1768,7 @@ def interactive_osm_centerline(
         btn_show_hide.label.set_text('Hide Line')
         state['current_centerline'] = state['original_centerline']
         plot_centerline(state['original_centerline'])
+        update_radius_overlay(slider_radius.val)
         update_status('Reset. Click "Recompute" to snap to channel.')
     
     def done(event):
