@@ -18,7 +18,7 @@ from rasterio.warp import transform_bounds
 from affine import Affine
 from scipy import ndimage
 from skimage.morphology import skeletonize
-from shapely.geometry import LineString, MultiLineString, Point
+from shapely.geometry import LineString, MultiLineString, Point, box
 from shapely.ops import linemerge, transform as shapely_transform
 from pyproj import Transformer
 
@@ -1372,6 +1372,51 @@ def derive_centerline(
     
     print(f"Centerline has {len(centerline_raster_crs.coords)} points")
     
+    # Clip centerline to study area (raster bounds)
+    print("Clipping centerline to study area bounds...")
+    study_area = box(*raster_bounds)
+    clipped_centerline = centerline_raster_crs.intersection(study_area)
+    
+    # Validate clipped centerline
+    if clipped_centerline.is_empty:
+        print("ERROR: Centerline does not intersect with study area!")
+        return None
+    
+    # Handle different geometry types after clipping
+    if clipped_centerline.geom_type == 'LineString':
+        centerline_raster_crs = clipped_centerline
+        print(f"✓ Centerline clipped: {len(centerline_raster_crs.coords)} points, length: {centerline_raster_crs.length:.2f} m")
+    elif clipped_centerline.geom_type == 'MultiLineString':
+        # If clipping resulted in multiple segments, take the longest one
+        longest = max(clipped_centerline.geoms, key=lambda g: g.length)
+        centerline_raster_crs = longest
+        print(f"✓ Centerline clipped to {len(clipped_centerline.geoms)} segments, using longest")
+        print(f"  Final centerline: {len(centerline_raster_crs.coords)} points, length: {centerline_raster_crs.length:.2f} m")
+    elif clipped_centerline.geom_type == 'GeometryCollection':
+        # Extract LineStrings from GeometryCollection
+        lines = [g for g in clipped_centerline.geoms if g.geom_type in ('LineString', 'MultiLineString')]
+        if not lines:
+            print("ERROR: No valid LineString geometries found after clipping!")
+            return None
+        # Flatten MultiLineStrings and take longest overall
+        all_lines = []
+        for geom in lines:
+            if geom.geom_type == 'LineString':
+                all_lines.append(geom)
+            else:  # MultiLineString
+                all_lines.extend(geom.geoms)
+        centerline_raster_crs = max(all_lines, key=lambda g: g.length)
+        print(f"✓ Centerline clipped (GeometryCollection), extracted longest segment")
+        print(f"  Final centerline: {len(centerline_raster_crs.coords)} points, length: {centerline_raster_crs.length:.2f} m")
+    else:
+        print(f"ERROR: Unexpected geometry type after clipping: {clipped_centerline.geom_type}")
+        return None
+    
+    # Final validation
+    if len(centerline_raster_crs.coords) < 2:
+        print("ERROR: Clipped centerline has fewer than 2 points!")
+        return None
+    
     # Snap centerline to actual channel if requested
     if snap_to_channel:
         # Use minmax as the river elevation range if provided
@@ -1874,10 +1919,55 @@ def derive_centerline_interactive(
     
     print(f"OSM Centerline has {len(osm_centerline.coords)} points")
     
+    # Clip centerline to study area (raster bounds)
+    print("Clipping centerline to study area bounds...")
+    study_area = box(*raster_bounds)  # Create box from (minx, miny, maxx, maxy)
+    clipped_centerline = osm_centerline.intersection(study_area)
+    
+    # Validate clipped centerline
+    if clipped_centerline.is_empty:
+        print("ERROR: Centerline does not intersect with study area!")
+        return None
+    
+    # Handle different geometry types after clipping
+    if clipped_centerline.geom_type == 'LineString':
+        final_centerline = clipped_centerline
+        print(f"✓ Centerline clipped: {len(final_centerline.coords)} points, length: {final_centerline.length:.2f} m")
+    elif clipped_centerline.geom_type == 'MultiLineString':
+        # If clipping resulted in multiple segments, take the longest one
+        longest = max(clipped_centerline.geoms, key=lambda g: g.length)
+        final_centerline = longest
+        print(f"✓ Centerline clipped to {len(clipped_centerline.geoms)} segments, using longest")
+        print(f"  Final centerline: {len(final_centerline.coords)} points, length: {final_centerline.length:.2f} m")
+    elif clipped_centerline.geom_type == 'GeometryCollection':
+        # Extract LineStrings from GeometryCollection
+        lines = [g for g in clipped_centerline.geoms if g.geom_type in ('LineString', 'MultiLineString')]
+        if not lines:
+            print("ERROR: No valid LineString geometries found after clipping!")
+            return None
+        # Flatten MultiLineStrings and take longest overall
+        all_lines = []
+        for geom in lines:
+            if geom.geom_type == 'LineString':
+                all_lines.append(geom)
+            else:  # MultiLineString
+                all_lines.extend(geom.geoms)
+        final_centerline = max(all_lines, key=lambda g: g.length)
+        print(f"✓ Centerline clipped (GeometryCollection), extracted longest segment")
+        print(f"  Final centerline: {len(final_centerline.coords)} points, length: {final_centerline.length:.2f} m")
+    else:
+        print(f"ERROR: Unexpected geometry type after clipping: {clipped_centerline.geom_type}")
+        return None
+    
+    # Final validation
+    if len(final_centerline.coords) < 2:
+        print("ERROR: Clipped centerline has fewer than 2 points!")
+        return None
+    
     # Open interactive snapping interface
     return interactive_osm_centerline(
         raster_path,
-        osm_centerline,
+        final_centerline,
         minmax=minmax,
         hillshade_params=hillshade_params
     )
