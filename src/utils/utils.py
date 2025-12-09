@@ -56,7 +56,7 @@ def merge_tifs(directory: str | Path, output_path: str | Path | None = None) -> 
         raise RuntimeError("Failed to build VRT")
     
     vrt_ds = None  # Close VRT
-    print(f"VRT created successfully")
+    print("VRT created successfully")
     
     # Step 2: Translate VRT to GeoTIFF - this is where the actual merging happens
     print(f"Converting VRT to GeoTIFF: {out_path}")
@@ -274,7 +274,7 @@ def interpolate(points: list[tuple[float, float, float]], raster_path: str | Pat
     # reshape the interpolated values back to the original shape
     water_surface_coarse = interpolated_flat.reshape(coarse_height, coarse_width)
 
-    print(f"Resampling back to original size")
+    print("Resampling back to original size")
 
     # calculate exact zoom factors
     zoom_x = width / coarse_width

@@ -12,6 +12,7 @@ from src.utils.utils import create_points_from_centerline, interpolate, sample_e
 
 from .utils import merge_tifs, print_raster_stats
 from .interfaces import interactive_min_max, interactive_hillshade, interactive_osm_centerline, derive_centerline, derive_centerline_interactive
+from src.interfaces.interfaces import _add_map_decorations
 
 
 def main() -> None:
@@ -79,6 +80,7 @@ def main() -> None:
         dem = src.read(band).astype(np.float32)
         nodata = src.nodata
         profile = src.profile.copy()
+        transform = src.transform  # Get transform for scale bar calculation
     
     # Calculate REM = DEM - water_surface
     rem = dem - water_surface
@@ -114,6 +116,11 @@ def main() -> None:
     # Add colorbar
     cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     cbar.set_label('Height above river (m)', fontsize=12)
+    
+    # Add scale bar and north arrow
+    # Calculate pixel size in meters (accounting for downsampling)
+    pixel_size = abs(transform[0]) * downsample_factor
+    _add_map_decorations(ax, dx=pixel_size, units='m', location='lower left')
     
     plt.tight_layout()
     plt.show()

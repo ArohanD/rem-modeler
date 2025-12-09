@@ -12,6 +12,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import TextBox, Button, Slider
 from matplotlib.patches import Polygon as MplPolygon
+from matplotlib_scalebar.scalebar import ScaleBar
 import rasterio
 from rasterio.enums import Resampling
 from rasterio.warp import transform_bounds
@@ -39,6 +40,88 @@ class ViewerState:
     vmin: float
     vmax: float
     user_inputs: dict[str, Any]
+
+
+def _add_north_arrow(ax: Any) -> None:
+    """
+    Add a simple north arrow to the upper right of the axes.
+    
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes to add the north arrow to
+    """
+    # Use axes coordinates (0-1 range) for positioning
+    # Place in upper right corner
+    x = 0.95
+    
+    # Add "N" label at top
+    ax.text(
+        x, 0.97,
+        'N',
+        transform=ax.transAxes,
+        ha='center',
+        va='top',
+        fontsize=11,
+        fontweight='bold',
+        zorder=101,
+        bbox=dict(
+            boxstyle='round,pad=0.2',
+            facecolor='white',
+            edgecolor='black',
+            alpha=0.8
+        )
+    )
+    
+    # Add arrow pointing UP (from bottom to top)
+    ax.annotate(
+        '',  # No text on the arrow itself
+        xy=(x, 0.93),  # Arrow tip (top)
+        xytext=(x, 0.85),  # Arrow base (bottom)
+        xycoords='axes fraction',
+        textcoords='axes fraction',
+        arrowprops=dict(
+            arrowstyle='->',
+            lw=2,
+            color='black'
+        ),
+        zorder=100
+    )
+
+
+def _add_map_decorations(ax: Any, dx: float = 1.0, units: str = 'm', location: str = 'lower left') -> None:
+    """
+    Add scale bar and north arrow to map axes using matplotlib-scalebar.
+    
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes to add decorations to
+    dx : float
+        Size of one pixel/unit in meters (pixel resolution)
+    units : str
+        Units of measurement ('m' for meters, 'km' for kilometers)
+    location : str
+        Location for scale bar ('lower left', 'lower right', etc.)
+    """
+    # Add scale bar using matplotlib-scalebar
+    scalebar = ScaleBar(
+        dx,  # Pixel resolution in meters
+        units,  # Units
+        length_fraction=0.15,  # 15% of axis width
+        location=location,
+        box_alpha=0.7,
+        color='black',
+        font_properties={'size': 9, 'weight': 'bold'},
+        scale_loc='top',
+        pad=0.5,
+        border_pad=0.5,
+        sep=3,
+    )
+    ax.add_artist(scalebar)
+    
+    # Add north arrow
+    _add_north_arrow(ax)
 
 
 def _load_raster_data(raster_path: Path, band: int, minmax: tuple[float | None, float | None] = (None, None)) -> ViewerState:
@@ -148,6 +231,11 @@ def interactive_raster_viewer(
     
     im = ax.imshow(state.display_data, cmap='YlGnBu', vmin=state.vmin, vmax=state.vmax)
     plt.colorbar(im, ax=ax, label='Value')
+    
+    # Add scale bar and north arrow
+    # Calculate pixel size in meters (accounting for downsampling)
+    pixel_size = abs(state.transform[0]) * state.scale
+    _add_map_decorations(ax, dx=pixel_size, units='m', location='lower left')
     
     title = ax.set_title(f'{state.raster_path.name} (Band {state.band})\nHover for pixel values')
     
@@ -1544,6 +1632,9 @@ def display_centerline_overlay(
     ax.set_xlabel('Easting (m)')
     ax.set_ylabel('Northing (m)')
     
+    # Add scale bar and north arrow (coordinates already in meters)
+    _add_map_decorations(ax, dx=1.0, units='m', location='lower left')
+    
     title = f'{raster_path.name}\nRiver Centerline from OpenStreetMap'
     if hillshade_params:
         title += f'\n(Hillshade: α={alpha:.1f}, z={exaggeration:.1f}x, alt={altitude:.0f}°)'
@@ -1715,6 +1806,9 @@ def interactive_osm_centerline(
     # Plot initial centerline
     plot_centerline(osm_centerline)
     update_radius_overlay(state['snap_radius'])
+    
+    # Add scale bar and north arrow (coordinates already in meters)
+    _add_map_decorations(ax, dx=1.0, units='m', location='lower left')
     
     title = ax.set_title(f'{raster_path.name}\nOSM Centerline - Adjust snapping parameters below')
     ax.set_xlabel('Easting (m)')
