@@ -33,4 +33,10 @@ ENV/
 data/tx/
 data/tutorial/
 
+# Ignore all output files
+outputs/
+
 *.tif
+
+
+

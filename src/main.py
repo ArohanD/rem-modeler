@@ -1,10 +1,18 @@
 """Entry point for the GIS 584 project package."""
 
 from pathlib import Path
+import sys
 
 from osgeo import gdal
+import numpy as np
+import rasterio
+import matplotlib.pyplot as plt
+
+from src.utils.utils import create_points_from_centerline, interpolate, sample_elevations_along_line
 
 from .utils import merge_tifs, print_raster_stats
+from .interfaces import interactive_min_max, interactive_hillshade, interactive_osm_centerline, derive_centerline, derive_centerline_interactive
+from src.interfaces.interfaces import _add_map_decorations
 
 
 def main() -> None:
@@ -22,16 +30,124 @@ def main() -> None:
     # merged = merge_tifs(tutorial_dir, output_path)
     # print(f"Merged raster written to {merged}")
 
-    merged = Path("outputs/tutorial_merged.tif")
+    merged = Path("outputs/tutorial_merged.tif") if not sys.argv[1] else Path(sys.argv[1])
 
     # Print Merged Raster Stats
     # Want to know the distribution of values in the merged raster
-    print_raster_stats(merged)
+    # print_raster_stats(merged)  # Commented out due to Windows encoding issue with Unicode chars
+
+    # Open an interactive panel of the raster where the user can get the value of
+    # a pixel under the cursor for a specified band
+    band = 1
+    river_min_elevation, river_max_elevation = interactive_min_max(merged, band)
+    
+    print(f"Selected elevation range: {river_min_elevation:.2f} to {river_max_elevation:.2f}")
+
+    # Allow the user to customize a hillshade on top of the current raster
+    alpha, exaggeration, altitude = interactive_hillshade(
+        merged, 
+        band, 
+        minmax=(river_min_elevation, river_max_elevation)
+    )
+    
+    print(f"Hillshade settings: alpha={alpha:.2f}, exaggeration={exaggeration:.2f}, altitude={altitude:.1f}°")
+
+    # Derive centerline from OpenStreetMap with INTERACTIVE snapping adjustment
+    centerline, snap_radius, point_spacing = derive_centerline_interactive(
+        merged,
+        minmax=(river_min_elevation, river_max_elevation), 
+        hillshade_params=(alpha, exaggeration, altitude)   # alpha, exaggeration, altitude
+        # minmax=(1300, 1320),
+        # hillshade_params=(0.5, 5, 45)  
+    )
+
+    # Create a point shapefile from the centerline, with the point spacing as the distance between points
+    densified_centerline_points = create_points_from_centerline(centerline, point_spacing)
+
+    # sample the elevations along the centerline
+    elevations_along_centerline = sample_elevations_along_line(densified_centerline_points, merged, band)
+
+    # interpolate the elevations along the centerline using RBF interpolation
+    water_surface = interpolate(elevations_along_centerline, merged, band)
+
+    # Create REM (Relative Elevation Model)
+    print("\n" + "="*60)
+    print("CREATING RELATIVE ELEVATION MODEL (REM)")
+    print("="*60)
+    
+    # Read the original DEM
+    with rasterio.open(merged) as src:
+        dem = src.read(band).astype(np.float32)
+        nodata = src.nodata
+        profile = src.profile.copy()
+        transform = src.transform  # Get transform for scale bar calculation
+    
+    # Calculate REM = DEM - water_surface
+    rem = dem - water_surface
+    
+    # Handle nodata values
+    if nodata is not None:
+        mask = dem == nodata
+        rem[mask] = nodata
+        print(f"REM elevation range: {np.nanmin(rem[~mask]):.2f} to {np.nanmax(rem[~mask]):.2f}m")
+    else:
+        mask = np.zeros_like(rem, dtype=bool)
+        print(f"REM elevation range: {rem.min():.2f} to {rem.max():.2f}m")
+    
+    # Display the REM (downsample for speed)
+    print("\nDisplaying REM...")
+    
+    # Downsample for fast display (every 10th pixel)
+    downsample_factor = 10
+    rem_display = rem[::downsample_factor, ::downsample_factor].copy()
+    
+    # Mask nodata for display
+    if nodata is not None:
+        mask_display = mask[::downsample_factor, ::downsample_factor]
+        rem_display[mask_display] = np.nan
+    
+    fig, ax = plt.subplots(figsize=(14, 8))
+    
+    # Display with color range 0-10 meters (typical for floodplain features). 5 looks prettier sometimes tho
+    im = ax.imshow(rem_display, cmap='YlGnBu', vmin=0, vmax=5, interpolation='bilinear')
+    ax.set_title('Relative Elevation Model (REM)\nHeight Above River Surface', fontsize=14, pad=15)
+    ax.axis('off')
+    
+    # Add colorbar
+    cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label('Height above river (m)', fontsize=12)
+    
+    # Add scale bar and north arrow
+    # Calculate pixel size in meters (accounting for downsampling)
+    pixel_size = abs(transform[0]) * downsample_factor
+    _add_map_decorations(ax, dx=pixel_size, units='m', location='lower left')
+    
+    plt.tight_layout()
+    plt.show()
+    
+    # Save the REM to file
+    filename = sys.argv[2] if sys.argv[2] else "rem_script.tif"
+    output_path = Path("outputs", filename)
+    output_path.parent.mkdir(exist_ok=True)
+    
+    profile.update(dtype=rasterio.float32, compress='lzw')
+    
+    with rasterio.open(output_path, 'w', **profile) as dst:
+        dst.write(rem, 1)
+    
+    print(f"\n✓ REM saved to: {output_path}")
+    print("="*60)
+
+
     
 
 
 if __name__ == "__main__":
     main()
+
+
+
+
 
 
 

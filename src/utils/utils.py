@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 from osgeo import gdal
+from rasterio import rasterio
+from scipy.interpolate import RBFInterpolator
+from scipy.ndimage import zoom
+from shapely.geometry import LineString, Point
+import numpy as np
+from tqdm import tqdm
 
 
 def merge_tifs(directory: str | Path, output_path: str | Path | None = None) -> Path:
@@ -50,7 +56,7 @@ def merge_tifs(directory: str | Path, output_path: str | Path | None = None) -> 
         raise RuntimeError("Failed to build VRT")
     
     vrt_ds = None  # Close VRT
-    print(f"VRT created successfully")
+    print("VRT created successfully")
     
     # Step 2: Translate VRT to GeoTIFF - this is where the actual merging happens
     print(f"Converting VRT to GeoTIFF: {out_path}")
@@ -138,4 +144,164 @@ def print_raster_stats(raster_path: str | Path) -> None:
     ds = None  # Close dataset
     print(f"\n{'='*60}\n")
 
-__all__ = ["merge_tifs", "print_raster_stats"]
+def create_points_from_centerline(centerline: LineString, point_spacing: float) -> LineString:
+    """
+    Create evenly spaced points along a centerline and return as a new LineString.
+    
+    Parameters
+    ----------
+    centerline : LineString
+        The input centerline geometry
+    point_spacing : float
+        Distance between consecutive points (in map units)
+        
+    Returns
+    -------
+    LineString
+        A new LineString with points sampled at regular intervals
+    """
+    total_length = centerline.length
+    
+    # Generate distances along the line
+    distances = []
+    distance = 0.0
+    while distance <= total_length:
+        distances.append(distance)
+        distance += point_spacing
+    
+    # Always include the endpoint
+    if distances[-1] < total_length:
+        distances.append(total_length)
+    
+    # Interpolate points at each distance
+    coords = []
+    for d in distances:
+        point = centerline.interpolate(d)
+        coords.append((point.x, point.y))
+    
+    return LineString(coords)
+
+
+def sample_elevations_along_line(
+    centerline: LineString, 
+    raster_path: str | Path, 
+    band: int = 1
+) -> list[tuple[float, float, float]]:
+    """
+    Sample elevation values from a raster at each point along a centerline.
+    
+    Returns list of (x, y, elevation) tuples for valid sample points.
+    """
+    with rasterio.open(raster_path) as src:
+        data = src.read(band)
+        transform = src.transform
+        nodata = src.nodata
+
+    samples = []
+    for x, y in centerline.coords:
+        # Convert geographic coords to pixel coords
+        col, row = ~transform * (x, y)
+        col, row = int(col), int(row)
+        
+        # Check if pixel is within raster bounds
+        if 0 <= row < data.shape[0] and 0 <= col < data.shape[1]:
+            value = data[row, col]
+            
+            # Skip nodata values
+            if nodata is None or value != nodata:
+                samples.append((x, y, float(value)))
+    
+    return samples
+
+def interpolate(points: list[tuple[float, float, float]], raster_path: str | Path, band: int) -> np.ndarray:
+    """
+    Interpolate sparse river elevation samples to create a smooth water surface raster.
+
+    Uses Radial Basis Function (thin plate spline) interpolation to create a 
+    smooth, continuous surface from discrete sample points along the river.
+    This surface represents the water elevation and can be subtracted from
+    the DEM to create a Relative Elevation Model (REM).
+
+    Parameters
+    ----------
+    points : list[tuple[float, float, float]]
+        List of (x, y, elevation) sample points from the river centerline
+    raster_path : str | Path
+        Path to the DEM raster (used for extent and resolution)
+    band : int, optional
+        Band number (default: 1)
+        
+    Returns
+    -------
+    np.ndarray
+        2D array of interpolated water surface elevations, same shape as input DEM
+    """
+
+    # convert the points to a numpy arrays
+    points_xy = np.array([[x, y] for x, y, _ in points])
+    values = np.array([z for _, _, z in points])
+
+    print(f"Interpolating {len(points_xy)} points")
+
+    # get raster properties
+    with rasterio.open(raster_path) as src:
+        height, width = src.height, src.width
+        left, bottom, right, top = src.bounds
+
+    # create a coarse grid to speed things up
+    scale_factor = 10
+    coarse_height = height // scale_factor
+    coarse_width = width // scale_factor
+
+    # create 1D arrays for the x and y coordinates
+    x_coords = np.linspace(left, right, coarse_width)
+    y_coords = np.linspace(top, bottom, coarse_height)
+
+    # create a 2D grid of the x and y coordinates
+    xx, yy = np.meshgrid(x_coords, y_coords)
+
+    # flatten to list of coordinate pairs
+    grid_points = np.column_stack((xx.ravel(), yy.ravel()))
+
+    print(f"Interpolating to {coarse_width} x {coarse_height} grid")
+
+    # interpolate the values at the grid points
+    interpolator = RBFInterpolator(points_xy, values, kernel='thin_plate_spline', smoothing=1.0)
+
+    # Interpolate the values at the grid points
+    interpolated_flat = interpolate_with_progress(interpolator, grid_points)
+
+    # reshape the interpolated values back to the original shape
+    water_surface_coarse = interpolated_flat.reshape(coarse_height, coarse_width)
+
+    print("Resampling back to original size")
+
+    # calculate exact zoom factors
+    zoom_x = width / coarse_width
+    zoom_y = height / coarse_height
+
+    water_surface = zoom(water_surface_coarse, (zoom_y, zoom_x), order=1)
+
+    # handle rounding errors
+    if water_surface.shape != (height, width):
+        water_surface = water_surface[:height, :width]
+
+    print("Interpolation complete")
+
+    return water_surface
+
+def interpolate_with_progress(interpolator, grid_points, chunk_size=100000):
+    total_points = len(grid_points)
+    result = np.zeros(total_points)
+    
+    # tqdm creates automatic progress bar
+    for i in tqdm(range(0, total_points, chunk_size), desc="Interpolating"):
+        end_idx = min(i + chunk_size, total_points)
+        result[i:end_idx] = interpolator(grid_points[i:end_idx])
+    
+    return result
+
+
+
+
+__all__ = ["merge_tifs", "print_raster_stats", "create_points_from_centerline"]
