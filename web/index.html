@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>REM Modeler — browser proof of concept</title>
+  </head>
+  <body>
+    <div id="app">
+      <aside id="sidebar">
+        <h1>REM Modeler <span class="tag">browser PoC</span></h1>
+
+        <section class="step" id="step-area">
+          <h2><span class="num">1</span> Area &amp; data</h2>
+          <p class="hint">Draw a box over a river (US: 1&nbsp;m lidar via USGS), then load the DEM.</p>
+          <div class="row">
+            <button id="btn-draw-bbox">Draw area on map</button>
+          </div>
+          <div class="row bbox-inputs">
+            <label>W <input id="bbox-w" type="number" step="0.001" /></label>
+            <label>S <input id="bbox-s" type="number" step="0.001" /></label>
+            <label>E <input id="bbox-e" type="number" step="0.001" /></label>
+            <label>N <input id="bbox-n" type="number" step="0.001" /></label>
+          </div>
+          <div id="plan-readout" class="readout"></div>
+          <div class="row">
+            <label class="wide">Source
+              <select id="source-select">
+                <option value="tnm">USGS 1 m COG tiles (TNM discovery)</option>
+                <option value="imageserver">USGS 3DEP ImageServer (any US area)</option>
+                <option value="urls">Direct COG URL(s)</option>
+                <option value="file">Local GeoTIFF file</option>
+              </select>
+            </label>
+          </div>
+          <div class="row" id="source-urls-row" hidden>
+            <textarea id="source-urls" rows="3" placeholder="https://…/USGS_1M_…tif (one per line)"></textarea>
+          </div>
+          <div class="row" id="source-file-row" hidden>
+            <input id="source-file" type="file" accept=".tif,.tiff" />
+          </div>
+          <div class="row">
+            <button id="btn-load" class="primary">Load DEM</button>
+          </div>
+        </section>
+
+        <section class="step disabled" id="step-explore">
+          <h2><span class="num">2</span> River range &amp; hillshade</h2>
+          <p class="hint">Hover the terrain to read elevations; set the river’s elevation range (highlighted blue).</p>
+          <div class="row">
+            <label>Min <input id="range-lo" type="number" step="0.1" /></label>
+            <label>Max <input id="range-hi" type="number" step="0.1" /></label>
+            <button id="btn-range-auto" title="2nd–98th percentile of elevations sampled along the centerline">Auto</button>
+          </div>
+          <div class="row">
+            <label class="wide">Hillshade <input id="hs-alpha" type="range" min="0" max="1" step="0.05" value="0.6" /></label>
+          </div>
+          <div class="row">
+            <label class="wide">Exaggeration <input id="hs-z" type="range" min="1" max="10" step="0.5" value="3" /></label>
+          </div>
+          <div class="row">
+            <label class="wide">Sun altitude <input id="hs-alt" type="range" min="5" max="85" step="5" value="45" /></label>
+          </div>
+        </section>
+
+        <section class="step disabled" id="step-centerline">
+          <h2><span class="num">3</span> Centerline</h2>
+          <div class="row">
+            <button id="btn-osm">Fetch from OpenStreetMap</button>
+            <button id="btn-draw-line">Draw manually</button>
+          </div>
+          <div class="row" id="osm-pick-row" hidden>
+            <select id="osm-select" class="wide"></select>
+          </div>
+          <p class="hint">Edit mode: drag vertices, click a segment to insert, right-click a vertex to delete. Shift-drag pans.</p>
+          <div class="row">
+            <label>Spacing (m) <input id="snap-spacing" type="number" value="25" min="2" /></label>
+            <label>Radius (m) <input id="snap-radius" type="number" value="100" min="5" /></label>
+          </div>
+          <div class="row">
+            <button id="btn-snap" class="primary">Snap to channel</button>
+            <button id="btn-unsnap">Undo snap</button>
+          </div>
+        </section>
+
+        <section class="step disabled" id="step-rem">
+          <h2><span class="num">4</span> REM</h2>
+          <div class="row">
+            <button id="btn-rem" class="primary">Generate REM</button>
+          </div>
+          <div class="row">
+            <label class="wide">Color range 0–<span id="vmax-label">5</span> m
+              <input id="rem-vmax" type="range" min="1" max="20" step="0.5" value="5" />
+            </label>
+          </div>
+          <div class="row">
+            <button id="btn-export-tif">Export GeoTIFF</button>
+            <button id="btn-export-png">Export PNG</button>
+            <button id="btn-show-dem">Show DEM</button>
+          </div>
+        </section>
+
+        <div id="log"></div>
+      </aside>
+
+      <main id="stage">
+        <div id="map-container"></div>
+        <canvas id="workbench" hidden></canvas>
+        <div id="hover-readout" hidden></div>
+        <div id="progress" hidden><div id="progress-bar"></div><span id="progress-text"></span></div>
+        <button id="btn-back-map" hidden>&#8592; Back to map</button>
+      </main>
+    </div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
